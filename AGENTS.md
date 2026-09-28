@@ -1,0 +1,5 @@
+# Agent notes — epitaka translator (fork)
+
+- uv only: `uv sync`, `uv run pytest`, `uv run src/<script>.py`. There is no pip path and no `requirements.txt`.
+- Importing `src/book_translator.py` (or anything that runs `load_dotenv()`) loads the real `.env` keys. In tests and probes, delete every `*_KEY_*` env var and fake the network before calling client code — a stray call spends the user's paid keys.
+- Indian-language targets must never contain Roman letters, Pāli terms included: they go in the local script (`NO_ROMAN_LANGS`, `roman_bleed` in `src/book_translator.py`).

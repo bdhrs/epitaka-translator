@@ -82,6 +82,7 @@ not this one, when the AI logic needs to change.
 import argparse
 import json
 import os
+import re
 import sys
 import types
 import sqlite3
@@ -145,6 +146,8 @@ FALLBACK_MODEL_CHAIN = [
     "gemini-3.5-flash",
     "gemini-3.1-pro-preview",
     "gemini-3-flash-preview",
+    "deepseek:deepseek-v4-flash",
+    "openrouter:stealth/space-bunny-alpha",
 ]
 
 # Prompts above this size trigger the size-reduction cascade below. Below
@@ -501,7 +504,7 @@ def check_translations_for_script_bleed(lang: str, translations: list[dict]) -> 
         text = t.get("translation", "")
         if text in ("", "~"):
             continue
-        reason = cu.describe_context_script_bleed(lang, text)
+        reason = cu.describe_context_script_bleed(lang, text) or roman_bleed(lang, text)
         if reason:
             note = f"[SCRIPT-BLEED] {reason}: {text[:80]!r}"
             existing_note = t.get("confidence_note")
@@ -524,7 +527,7 @@ def check_glossary_terms_for_script_bleed(lang: str, new_terms: list[dict]) -> t
     clean, flagged = [], []
     for term in new_terms:
         translation = str(term.get("translation") or term.get("english") or "")
-        if cu.describe_context_script_bleed(lang, translation):
+        if cu.describe_context_script_bleed(lang, translation) or roman_bleed(lang, translation):
             flagged.append(term)
         else:
             clean.append(term)
@@ -663,12 +666,69 @@ def merge_small_chunks(
 
 
 # ══════════════════════════════════════════════════════════════════
+# Parallel reference translations
+# ══════════════════════════════════════════════════════════════════
+
+# Hindi is a closer reference than Thai for these. Hindi itself is left out:
+# its own DB is the target, so it keeps Thai.
+HINDI_REF_LANGS = frozenset({"kn", "ta", "te", "ml", "mr", "bn", "gu", "pa", "or", "ne"})
+
+_REF_LANG_NAMES = {"en": "English", "th": "Thai", "hi": "Hindi", "si": "Sinhala"}
+
+# Indic-script targets: output must contain no Roman letters at all, Pāli
+# terms included.
+NO_ROMAN_LANGS = HINDI_REF_LANGS | {"hi"}
+
+# Tags like <b>/<i> must survive in the output, so they are not counted.
+_MARKUP = re.compile(r"<[^>]+>|&#?\w+;")
+_LATIN  = re.compile(r"[A-Za-zÀ-ɏḀ-ỿ]")
+
+
+def roman_bleed(lang: str, text: str) -> str:
+    """Why `text` is not allowed for a no-Roman target, or "" if it is fine."""
+    if lang not in NO_ROMAN_LANGS:
+        return ""
+    m = _LATIN.search(_MARKUP.sub("", text or ""))
+    return f"Roman letter {m.group()!r} in {lang} output" if m else ""
+
+
+def parallel_ref_langs(lang: str) -> tuple[str, ...]:
+    """Language codes of the parallel reference DBs shown for a target language."""
+    return ("en", "hi", "si") if lang in HINDI_REF_LANGS else ("en", "th", "si")
+
+
+def parallel_ref_dbs(lang: str) -> set[str]:
+    """Filenames of the parallel reference DBs shown for a target language."""
+    return {f"epitaka_{code}.db" for code in parallel_ref_langs(lang)}
+
+
+# ══════════════════════════════════════════════════════════════════
 # Prompts
 # ══════════════════════════════════════════════════════════════════
+
+def _reference_script_note(lang: str, lang_name: str) -> str:
+    """The sentence naming which scripts really appear as reference material."""
+    if "hi" in parallel_ref_langs(lang):
+        return """Hindi (Devanagari), Sinhala, and Myanmar appear only as
+REFERENCE material in this prompt (blocks 6 and 7 below); Thai does
+not appear in this prompt's reference material at all."""
+    return f"""Thai, Sinhala, and Myanmar appear only as
+REFERENCE material in this prompt (blocks 6 and 7 below); Devanagari does
+not appear in this prompt's reference material at all and has no reason
+to appear in your output unless {lang_name} IS Hindi, Marathi, or Nepali."""
+
 
 def _build_system_prompt(lang: str) -> str:
     """Build the system prompt with the correct target language injected."""
     lang_name = cu.lang_name(lang)
+    ref_names = "/".join(_REF_LANG_NAMES[code] for code in parallel_ref_langs(lang))
+    reference_script_note = _reference_script_note(lang, lang_name)
+    no_roman_note = (
+        f"\nNever use Roman (Latin) letters anywhere in {lang_name} output. Write every"
+        f"\nPāli term you keep, including the (<i>pali term</i>) quote after a defined"
+        f"\nword, in {lang_name} script."
+        if lang in NO_ROMAN_LANGS else ""
+    )
     return f"""You are an expert scholar-translator of Pāli Theravāda Buddhist literature
 (canonical texts, commentaries [aṭṭhakathā] and sub-commentaries [ṭīkā]).
 
@@ -679,7 +739,7 @@ ACCURATE and READABLE for a GENERAL but serious audience. When selecting termino
 strictly adhere to Theravāda Buddhist translation conventions. Do not mix in terminology,
 concepts, or phrasing associated with Mahāyāna, Tibetan Buddhism, or other religions.
 Try to minimize the use of pali term in translation except commonly accepted terms like nibbāna, tathāgata, etc.
-All glossary "translation" fields must also be in {lang_name}.
+All glossary "translation" fields must also be in {lang_name}.{no_roman_note}
 
 ⚠ LANGUAGE-BLEED WARNING: You will be shown reference translations in OTHER
 languages (see block 6 below), which may include a language closely related to,
@@ -693,10 +753,7 @@ different (even closely related) language.
 Thai, Sinhala, Myanmar, and Devanagari (Hindi/Marathi/Nepali) script in
 particular must NEVER appear in your output unless {lang_name} literally
 uses that script — not even a single word or loanword, regardless of how
-familiar or "safe" it may look. Thai, Sinhala, and Myanmar appear only as
-REFERENCE material in this prompt (blocks 6 and 7 below); Devanagari does
-not appear in this prompt's reference material at all and has no reason
-to appear in your output unless {lang_name} IS Hindi, Marathi, or Nepali.
+familiar or "safe" it may look. {reference_script_note}
 
 You will be given several reference blocks:
   1. ESTABLISHED GLOSSARY — accumulated translation memory containing
@@ -714,7 +771,7 @@ You will be given several reference blocks:
                                     for tone/terminology continuity.
   5. TRANSLATED MŪLA / AṬṬHAKATHĀ / ṬĪKĀ REFERENCES — other already-translated
                                     paragraphs linked to this passage.
-  6. PARALLEL HUMAN TRANSLATIONS  — existing English/Thai/Sinhala human
+  6. PARALLEL HUMAN TRANSLATIONS  — existing {ref_names} human
                                     translations of these same lines, for
                                     meaning and terminology reference only
                                     (see language-bleed warning above).
@@ -1037,8 +1094,9 @@ def process_book(
             mula_block     = MulaAtthaContext(params, book_id, ctx_start, ctx_end).build()
             nissaya_block  = NissayaContext(params, chunk).build()
 
-            # Parallel human translations — limited to English, Thai, and
-            # Sinhala reference DBs only (not every epitaka_*.db in the
+            # Parallel human translations — limited to English, Thai (Hindi
+            # for Indian targets, see parallel_ref_dbs), and Sinhala
+            # reference DBs only (not every epitaka_*.db in the
             # folder), for meaning/terminology reference during translation.
             #
             # IMPORTANT: scoped to the exact (para_id, line_id) pairs actually
@@ -1058,7 +1116,7 @@ def process_book(
             parallel_block = ParallelTranslationContext(
                 params, book_id, chunk_start, chunk_end,
                 line_ids=chunk_line_ids,
-                only_langs={"epitaka_en.db", "epitaka_th.db", "epitaka_si.db"},
+                only_langs=parallel_ref_dbs(args.lang),
                 log_info=print, log_warn=print,
             ).build()
 
@@ -1153,7 +1211,7 @@ def process_book(
             if bleed_flagged:
                 bad_ids = ", ".join(f"p{t.get('para_id')}L{t.get('line_id')}" for t in bleed_flagged)
                 print(f"  ⚠ SCRIPT BLEED in chunk {chunk_label}: {len(bleed_flagged)} "
-                      f"translation(s) looked like Thai/Sinhala/Myanmar/Devanagari script and were "
+                      f"translation(s) looked like Thai/Sinhala/Myanmar/Devanagari script (or had Roman letters, for Indic targets) and were "
                       f"DROPPED, not saved ({bad_ids}). These lines stay pending — "
                       f"re-run this book (without --overwrite) later to retry them.")
 
@@ -1161,7 +1219,7 @@ def process_book(
             if gloss_bleed_flagged:
                 bad_terms = ", ".join(repr(t.get("pali")) for t in gloss_bleed_flagged)
                 print(f"  ⚠ SCRIPT BLEED in chunk {chunk_label}: {len(gloss_bleed_flagged)} "
-                      f"glossary term(s) looked like Thai/Sinhala/Myanmar/Devanagari script and were "
+                      f"glossary term(s) looked like Thai/Sinhala/Myanmar/Devanagari script (or had Roman letters, for Indic targets) and were "
                       f"DROPPED, not saved ({bad_terms}).")
 
             low_conf = sum(1 for t in translations if t.get("confidence") == "low")
@@ -1355,7 +1413,8 @@ def main() -> int:
     parser.add_argument("--glossary-db",    default="",
                         help="Override path to glossary_<lang>.db (default: auto-derived next to epitaka.db).")
     parser.add_argument("--model",          default=None,
-                        help="Single Gemini model to use (e.g. gemini-3.7-flash). "
+                        help="Single model to use (e.g. gemini-3.7-flash, "
+                             "deepseek:deepseek-v4-flash, openrouter:<model-id>). "
                              "If omitted, the FALLBACK_MODEL_CHAIN is tried in order, "
                              "falling over to the next model when one is rate-limited.")
     parser.add_argument("--api-keys",       default="")
@@ -1415,6 +1474,14 @@ def main() -> int:
 
     explicit_keys = [k.strip() for k in args.api_keys.split(",") if k.strip()]
     rotator = ai.make_rotator(explicit_keys)
+    # A pinned model with no keys would otherwise end as "All API keys
+    # exhausted", which runner.sh answers with a 3 h sleep, forever.
+    if args.model:
+        provider = ai.split_model(args.model)[0]
+        if rotator.key_count(provider) == 0:
+            print(f"[keys] No {provider} keys for --model {args.model}: "
+                  f"set {provider.upper()}_KEY_1 in .env.")
+            return 1
 
     params = {"epitaka_db": epitaka_db, "lang_db": lang_db, "glossary_db": glossary_db}
     translation_writer = TranslationWriter(params, log_info=print, log_warn=print, log_error=print)

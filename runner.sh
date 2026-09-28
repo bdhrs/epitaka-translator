@@ -10,7 +10,7 @@
 # What it does:
 #   1. Ensures the required SQLite data files exist in ./data (downloading
 #      + unzipping them from the epitaka_app GitHub releases when missing).
-#   2. Activates .venv if present.
+#   2. Syncs .venv with uv (uv is required) and activates it.
 #   3. Runs `python src/book_translator.py --lang <lang> --books preset ...`
 #      in a loop: if all API keys are exhausted it sleeps 3h and retries
 #      (translation resumes where it left off); on other errors it retries
@@ -20,6 +20,20 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${0}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# ---------------------------------------------------------------------------
+# 0. Language / model selection (first, because the data files depend on it)
+# ---------------------------------------------------------------------------
+LANG_CODE="${1:-}"
+MODEL_NAME="${2:-}"
+
+if [ -z "$LANG_CODE" ]; then
+    read -rp "Enter target language code (e.g., si, th, en): " LANG_CODE
+fi
+
+if [ -z "$MODEL_NAME" ]; then
+    read -rp "Enter model name (empty = automatic fallback chain, recommended): " MODEL_NAME
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Required data files — download anything that's missing.
@@ -37,6 +51,15 @@ epitaka_th.db|epitaka_th.zip
 epitaka_si.db|epitaka_si.zip
 epitaka_my_nissaya.db|epitaka_my_nissaya.zip
 "
+
+# Hindi is a reference only for these targets — keep in step with
+# HINDI_REF_LANGS in src/book_translator.py.
+case "$LANG_CODE" in
+    kn|ta|te|ml|mr|bn|gu|pa|or|ne)
+        REQUIRED_FILES="$REQUIRED_FILES
+epitaka_hi.db|epitaka_hi.zip"
+        ;;
+esac
 
 download_file() {
     _url="${1}"
@@ -103,43 +126,21 @@ ensure_data_files || exit 1
 export EPITAKA_DB="${EPITAKA_DB:-$DATA_DIR/epitaka.db}"
 
 # ---------------------------------------------------------------------------
-# 2. Python environment — create .venv and install requirements if needed
+# 2. Python environment — uv syncs .venv from pyproject.toml / uv.lock
 # ---------------------------------------------------------------------------
-if [ ! -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
-    echo "[PYTHON] No .venv found — creating it (python3 -m venv .venv)..."
-    if ! command -v python3 >/dev/null 2>&1; then
-        echo "[PYTHON] ERROR: python3 is required but not installed." >&2
-        exit 1
-    fi
-    python3 -m venv "$SCRIPT_DIR/.venv" || exit 1
+if ! command -v uv >/dev/null 2>&1; then
+    echo "[PYTHON] ERROR: uv is required (https://docs.astral.sh/uv/getting-started/installation/)." >&2
+    exit 1
 fi
+uv sync --no-dev --project "$SCRIPT_DIR" || exit 1
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/.venv/bin/activate"
 
-VENV_PY="$SCRIPT_DIR/.venv/bin/python"
-if ! "$VENV_PY" -c "import google.genai, dotenv, requests" 2>/dev/null; then
-    echo "[PYTHON] Installing dependencies (pip install -r requirements.txt)..."
-    "$VENV_PY" -m pip install -r "$SCRIPT_DIR/requirements.txt" || exit 1
-else
-    echo "[PYTHON] Dependencies OK."
-fi
-
 # ---------------------------------------------------------------------------
-# 3. Language / model selection
+# 3. Model arguments
 # ---------------------------------------------------------------------------
-LANG_CODE="${1:-}"
-MODEL_NAME="${2:-}"
-
-if [ -z "$LANG_CODE" ]; then
-    read -rp "Enter target language code (e.g., si, th, en): " LANG_CODE
-fi
-
-if [ -z "$MODEL_NAME" ]; then
-    read -rp "Enter model name (empty = automatic fallback chain, recommended): " MODEL_NAME
-fi
-
 # When no model is given we omit --model entirely so book_translator.py uses
-# its FALLBACK_MODEL_CHAIN (gemini-3.7-flash -> ... -> gemini-3-flash-preview).
+# its FALLBACK_MODEL_CHAIN (Gemini models, then DeepSeek, then OpenRouter).
 MODEL_ARGS=()
 if [ -n "$MODEL_NAME" ]; then
     MODEL_ARGS=(--model "$MODEL_NAME")

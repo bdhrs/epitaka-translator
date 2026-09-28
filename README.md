@@ -16,8 +16,8 @@ cp .env.example .env   # then add your GEMINI_KEY_<N> lines to .env
 ./runner.sh vi         # data, venv, and dependencies are set up automatically
 ```
 
-That's it: the runner downloads any missing database files, creates `.venv`,
-installs `requirements.txt`, and loops the translation until done (sleeping
+That's it: the runner downloads any missing database files, syncs `.venv`
+with [uv](https://docs.astral.sh/uv/) (required), and loops the translation until done (sleeping
 3 h and resuming whenever all API keys are exhausted). Details below.
 
 ## How it works
@@ -136,6 +136,20 @@ model is additionally instructed to compare them: genuine disagreements
 between the sources go into the `remarks` output with a suggested choice and
 reason, saved to `translation_remarks` for **human review**.
 
+**Indian target languages use Hindi instead of Thai.** For `kn ta te ml mr
+bn gu pa or ne`, the three references are English, **Hindi**
+(`epitaka_hi.db`), and Sinhala (`parallel_ref_dbs` in `book_translator.py`);
+the system prompt names the same languages. Hindi itself keeps English/Thai/
+Sinhala, since its own DB is the target. Known gap: Marathi and Nepali share
+Devanagari with Hindi, so the script-bleed guard cannot catch a Hindi leak
+into those two.
+
+**No Roman letters for Indic-script targets.** For the same languages plus
+Hindi, the prompt forbids Roman (Latin) letters and asks for every kept Pāli
+term in the target script, and the script-bleed guard drops any translation
+or glossary term containing a Roman letter (HTML tags like `<b>`/`<i>` and
+digits are ignored). Dropped lines stay pending and are retried on a later run.
+
 ### Word definitions for difficult words
 
 `PaliDefsContext` handles the hard vocabulary:
@@ -154,8 +168,9 @@ special rule for rendering `<b>`-wrapped Pāli terms.
 
 ### Nissaya + previous paragraph
 
-- `NissayaContext` adds the Myanmar **word-by-word gloss** (romanised to
-  IAST) for each line, with edition labels where several exist — the most
+- `NissayaContext` adds the Myanmar **word-by-word gloss** (Pāli words
+  romanised to IAST with Aksharamukha — before it was a dependency this
+  silently did nothing, which is why `examples/` show Myanmar script) for each line, with edition labels where several exist — the most
   literal layer of help, and a listed trigger for `low` confidence when it is
   missing.
 - `PreviousTranslationContext` carries the immediately preceding paragraph's
@@ -200,6 +215,10 @@ Related tools in `src/`:
 | `verify_translation.py` | Spot-check translation quality via a second model |
 | `cleanup_bleeding.py` | Remove wrong-script rows already stored in a DB |
 | `study_builder.py` | Generate English study guides into `epitaka_en.db` |
+| `export_text.py` | Plain text file, para by para: Pāli in the target language's script (Aksharamukha), then its translation |
+
+For example, MN10 in Kannada:
+`uv run src/export_text.py --lang kn --book M-i --start 280 --end 410 --out mn10_kn.txt`
 
 Shared infrastructure lives in `src/common/`: `common_utils.py` (DB paths,
 schema, glossary upserts, stem lookup, script-bleed detection),
@@ -211,12 +230,8 @@ schema, glossary upserts, stem lookup, script-bleed detection),
 ```bash
 cd translator
 
-# 1. Environment + dependencies
-# (skipped automatically when you use ./runner.sh — it creates .venv and
-# installs requirements.txt on first run)
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# 1. Environment + dependencies (uv is required; ./runner.sh runs this itself)
+uv sync                # .venv from pyproject.toml + uv.lock (adds pytest)
 
 # 2. API keys
 cp .env.example .env
@@ -228,6 +243,7 @@ cp .env.example .env
 #    ./data/epitaka_en.db           English human translations (reference)
 #    ./data/epitaka_th.db           Thai human translations (reference)
 #    ./data/epitaka_si.db           Sinhala human translations (reference)
+#    ./data/epitaka_hi.db           Hindi translations (reference for Indian targets)
 #    ./data/epitaka_my_nissaya.db   Myanmar nissaya word-by-word gloss
 ```
 
@@ -265,13 +281,31 @@ How rotation works (`src/common/ai_client.py`, class `KeyRotator`):
   ("All API keys exhausted", optional Telegram alert via `TELEGRAM_TOKEN` /
   `TELEGRAM_CHAT_ID`) — `runner.sh` then sleeps 3 h and retries.
 
+### DeepSeek and OpenRouter
+
+Add their keys the same way, as numbered variables:
+
+```dotenv
+DEEPSEEK_KEY_1="sk-..."
+OPENROUTER_KEY_1="sk-or-..."
+```
+
+Name the model with a provider prefix — `deepseek:deepseek-v4-flash`,
+`openrouter:stealth/space-bunny-alpha`; a bare name is a Gemini model. Each
+model only ever gets keys of its own provider. The fallback chain ends with
+these two models after the Gemini ones, so a run moves on to DeepSeek and
+then OpenRouter when every Gemini model is used up. HTTP 401/402/403 from
+either provider removes that key (402 is DeepSeek's "insufficient balance").
+The calls go through `src/common/ai_openai_compat.py` (single-turn only; tool
+calling stays Gemini-only).
+
 ## Running
 
 All commands run from this `translator/` directory (scripts live under
 `src/` since the reorganisation):
 
 ```bash
-source .venv/bin/activate
+source .venv/bin/activate   # or prefix each command with `uv run` instead of `python`
 
 # Translate into Sinhala, full preset book order, pinned model:
 python src/book_translator.py --lang si --books preset --model gemini-3.7-flash
@@ -345,6 +379,7 @@ files at startup and downloads + unzips anything missing from the
 | `epitaka_en.db` | `epitaka_en.zip` |
 | `epitaka_th.db` | `epitaka_th.zip` |
 | `epitaka_si.db` | `epitaka_si.zip` |
+| `epitaka_hi.db` (only for `kn ta te ml mr bn gu pa or ne`) | `epitaka_hi.zip` |
 | `epitaka_my_nissaya.db` | `epitaka_my_nissaya.zip` |
 
 It needs `curl` (or `wget`) and `unzip`. `EPITAKA_DB` env var (or
@@ -358,20 +393,23 @@ legacy folder is used as a fallback so existing checkouts keep working.
 ```text
 translator/
 ├── runner.sh            # data check + continuous translation loop
-├── requirements.txt     # pip dependencies
-├── .env.example         # copy to .env, add GEMINI_KEY_<N>
+├── pyproject.toml       # uv project and dependencies (+ uv.lock); `uv run pytest` runs tests/
+├── .env.example         # copy to .env, add GEMINI_KEY_<N> / DEEPSEEK_KEY_<N> / OPENROUTER_KEY_<N>
 ├── README.md            # this file
 ├── data/                # SQLite DBs (downloaded by runner.sh if missing)
 ├── examples/            # real prompt/response pairs (see above)
+├── tests/               # pytest tests for the provider and Hindi-reference code
 └── src/
     ├── book_translator.py    # main translation run
     ├── glossary_builder.py   # glossary from existing translations
     ├── study_builder.py      # English study guides
     ├── verify_translation.py # quality spot-checks
     ├── cleanup_bleeding.py   # wrong-script cleanup
+    ├── export_text.py        # Pāli (target script) + translation as plain text
     └── common/
         ├── common_utils.py     # DB paths/schema, glossary, script-bleed
         ├── ai_client.py        # Gemini calls, key rotation, retries
+        ├── ai_openai_compat.py # one DeepSeek/OpenRouter chat call
         ├── ai_client_bai.py    # alternate provider client (verification)
         └── context_builders.py # prompt context blocks
 ```

@@ -1574,6 +1574,7 @@ _EPITAKA_LABELS: dict[str, str] = {
     "epitaka_en.db":      "English translation",
     "epitaka_si.db":      "Sinhala translation",
     "epitaka_th.db":      "Thai translation",
+    "epitaka_hi.db":      "Hindi translation",
 }
 
 

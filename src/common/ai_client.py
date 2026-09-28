@@ -61,8 +61,11 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import urllib.parse
 import urllib.request
+
+from . import ai_openai_compat
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logging.getLogger("google").setLevel(logging.WARNING)
@@ -158,6 +161,29 @@ class AllKeysExhaustedError(RuntimeError):
     """Raised when every configured Gemini API key has been permanently removed."""
 
 
+PROVIDERS = ("gemini", "deepseek", "openrouter")
+
+
+class CompatError(RuntimeError):
+    """A failed DeepSeek/OpenRouter call, shaped like a Gemini SDK error for _generate_with_retry."""
+
+    def __init__(self, status_code: int | None, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def split_model(model: str) -> tuple[str, str]:
+    """
+    "deepseek:deepseek-v4-flash" -> ("deepseek", "deepseek-v4-flash").
+    A bare name is a Gemini model. Only the first colon splits, and only for a
+    known provider, because OpenRouter ids can contain colons ("x/y:free").
+    """
+    prefix, sep, rest = (model or "").partition(":")
+    if sep and prefix in PROVIDERS:
+        return prefix, rest
+    return "gemini", model
+
+
 class KeyRotator:
     """
     Round-robins across a pool of Gemini API keys, while enforcing a per-key
@@ -184,8 +210,8 @@ class KeyRotator:
         self._lock = threading.Lock()
         if not keys:
             raise RuntimeError(
-                "No Gemini API keys configured. "
-                "Set GEMINI_KEY_<N> env vars or pass --api-keys."
+                "No API keys configured. Set GEMINI_KEY_<N>, DEEPSEEK_KEY_<N> "
+                "or OPENROUTER_KEY_<N> env vars, or pass --api-keys."
             )
         self._keys      = list(keys)
         self._index     = 0
@@ -206,13 +232,23 @@ class KeyRotator:
             k: f"key#{i+1}" for i, k in enumerate(self._keys)
         }
         log.info(
-            f"Loaded {len(self._keys)} Gemini key(s): "
+            f"Loaded {len(self._keys)} API key(s): "
             f"{', '.join(self._labels.get(k, '?') for k in self._keys)}. "
             f"Budget: {rpm_limit} rpm / {tpm_limit} tpm per key."
         )
 
     def _label(self, key: str) -> str:
         return self._labels.get(key, _key_id(key))
+
+    def key_count(self, provider: str) -> int:
+        """How many live keys belong to `provider`."""
+        with self._lock:
+            return sum(1 for k in self._keys if self._provider(k) == provider)
+
+    def _provider(self, key: str) -> str:
+        """Provider from the env-var label ("DEEPSEEK_KEY_1"); unlabelled keys are Gemini."""
+        prefix = self._labels.get(key, "").partition("_KEY_")[0].lower()
+        return prefix if prefix in PROVIDERS else "gemini"
 
     def remaining_key_count(self) -> int:
         """How many keys are left in the pool at all (any model)."""
@@ -271,13 +307,20 @@ class KeyRotator:
         that's already known to be exhausted/invalid elsewhere.
         """
         self._sync_dead_keys(model)
+        provider = split_model(model)[0]
         while True:
             with self._lock:
                 if not self._keys:
                     raise AllKeysExhaustedError("All Gemini API keys exhausted.")
+                provider_keys = [k for k in self._keys if self._provider(k) == provider]
                 dead_here     = self._dead_for_model.get(model, set())
-                keys_snapshot = [k for k in self._keys if _key_id(k) not in dead_here]
-                start_index   = self._index
+                keys_snapshot = [k for k in provider_keys if _key_id(k) not in dead_here]
+                start_index   = self._index % max(len(keys_snapshot), 1)
+            if not provider_keys:
+                raise AllKeysExhaustedError(
+                    f"No {provider} keys left for model {model} "
+                    f"(set {provider.upper()}_KEY_1 in .env)."
+                )
             if not keys_snapshot:
                 raise AllKeysExhaustedError(
                     f"All keys 429-parked for model {model} (keys still live "
@@ -287,8 +330,7 @@ class KeyRotator:
             key, wait_seconds = self._try_reserve(keys_snapshot, start_index, estimated_tokens, model)
             if key is not None:
                 with self._lock:
-                    if key in self._keys:
-                        self._index = (self._keys.index(key) + 1) % len(self._keys)
+                    self._index = (keys_snapshot.index(key) + 1) % len(keys_snapshot)
                 return key
 
             wait_seconds = max(wait_seconds, 1.0)
@@ -381,7 +423,7 @@ class KeyRotator:
         time) finds out and stops trying that key too, instead of each
         process independently re-discovering the same dead key the hard way.
 
-        Full identifying info (label, the key itself, why, and when) is
+        Identifying info (label, why, and when — never the key itself) is
         written to KEY_STATE_FILE["_dead_keys_info"] so you can later answer
         "which of my configured keys got removed, and why" just by reading
         the state file — not just an opaque hash with no history attached.
@@ -409,7 +451,6 @@ class KeyRotator:
                 dead_info = state.setdefault("_dead_keys_info", {})
                 dead_info[kid] = {
                     "label":      label,
-                    "key":        key,
                     "reason":     reason,
                     "removed_at": now,
                 }
@@ -463,7 +504,6 @@ class KeyRotator:
                 stats = state.setdefault("_stats", {})
                 entry = stats.setdefault(kid, {
                     "label":           label,
-                    "key":             key,
                     "success_count":   0,
                     "failure_count":   0,
                     "last_success_at": None,
@@ -497,7 +537,8 @@ class KeyRotator:
 def make_rotator(api_keys: list[str]) -> KeyRotator:
     """
     Build a KeyRotator from an explicit --api-keys list, or, if that's empty,
-    from every GEMINI_KEY_<N> environment variable that's set.
+    from every GEMINI_KEY_<N>, DEEPSEEK_KEY_<N> and OPENROUTER_KEY_<N>
+    environment variable that's set.
 
     When loading from env vars, each key is labeled with its env var name
     (e.g. "GEMINI_KEY_23"), so later logs/state ("Key removed: GEMINI_KEY_23
@@ -509,11 +550,11 @@ def make_rotator(api_keys: list[str]) -> KeyRotator:
     env_items = [
         (k, v.strip())
         for k, v in os.environ.items()
-        if re.match(r"^GEMINI_KEY_\d+$", k) and v.strip()
+        if re.match(r"^(GEMINI|DEEPSEEK|OPENROUTER)_KEY_\d+$", k) and v.strip()
     ]
     # Sort by the numeric suffix so labels/logs come out in a sane order
     # (GEMINI_KEY_2 before GEMINI_KEY_10), not alphabetical/env-dict order.
-    env_items.sort(key=lambda kv: int(kv[0].rsplit("_", 1)[1]))
+    env_items.sort(key=lambda kv: (kv[0].split("_")[0], int(kv[0].rsplit("_", 1)[1])))
     env_keys = [v for _, v in env_items]
     labels   = {v: k for k, v in env_items}
     return KeyRotator(env_keys, labels=labels)
@@ -621,7 +662,8 @@ def _generate_with_retry(
 
         try:
             key = rotator.acquire(estimated_tokens, model=model)
-        except AllKeysExhaustedError:
+        except AllKeysExhaustedError as exc:
+            log.warning(f"[Gemini] {exc}")
             if rotator.remaining_key_count() == 0:
                 # Truly nothing left — every key was permanently removed
                 # (invalid/expired/blocked). Nothing a model switch can fix.
@@ -633,13 +675,26 @@ def _generate_with_retry(
             continue
 
         result: dict = {"response": None, "error": None}
+        provider, model_name = split_model(model)
 
         def _call():
             try:
-                client = genai.Client(api_key=key)
-                r = client.models.generate_content(
-                    model=model, contents=contents, config=config,
-                )
+                if provider == "gemini":
+                    client = genai.Client(api_key=key)
+                    r = client.models.generate_content(
+                        model=model_name, contents=contents, config=config,
+                    )
+                else:
+                    # Single-turn only: the tool-calling loop stays Gemini-only.
+                    text, status, err = ai_openai_compat.chat(
+                        provider, key, model_name,
+                        config.system_instruction or "",
+                        contents[0].parts[0].text,
+                        config.max_output_tokens, timeout,
+                    )
+                    if text is None:
+                        raise CompatError(status, err)
+                    r = types.SimpleNamespace(text=text)
                 result["response"] = r
             except Exception as e:
                 result["error"] = e
@@ -674,7 +729,7 @@ def _generate_with_retry(
 
             is_invalid_key = status in (400, 401, 403) and any(
                 term in err_str.upper() for term in ("API_KEY_INVALID", "UNAUTHENTICATED", "PERMISSION_DENIED", "KEY_EXPIRED", "INVALID_API_KEY")
-            )
+            ) or (provider != "gemini" and status in (401, 402, 403))  # 402 = DeepSeek "Insufficient Balance"
             if is_invalid_key:
                 rotator.remove(key, reason=err_msg, model=model)
                 time.sleep(5)
