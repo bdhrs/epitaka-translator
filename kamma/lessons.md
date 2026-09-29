@@ -6,3 +6,8 @@
 - 2026-09-28 [WORKFLOW] The first data download had no stall detection and froze at 46 MB; curl with -C - plus --speed-limit/--speed-time and a retry loop finished cleanly.
 - 2026-09-28 [POSITIVE] The user-supplied review said PASSED, but the independent subagent's major finding (a missing key sends runner.sh into a 3 h sleep forever) was real; checking every reviewer against the code caught it.
 - 2026-09-28 [POSITIVE] Revert checks for every new rule, plus the live Roman guard catching one English word ("born") in Kannada output, gave real evidence rather than green-only tests.
+- 2026-09-29 [BEHAVIOR] Changed chat()'s return shape without updating the tests' fake replies; with time.sleep stubbed out, the rate-limit wait spun forever and the suite hung instead of failing.
+- 2026-09-29 [BEHAVIOR] Stopped the hung pytest with `pgrep -f`, which matched the killing shell's own command line — the exact trap the global rules warn about. Kill by PID from a listing instead.
+- 2026-09-29 [WORKFLOW] costs.LEDGER pointed at the real data/costs.csv at import time; a tests/conftest.py autouse fixture now redirects it before any test can write there.
+- 2026-09-29 [POSITIVE] Reading the pricing page's raw HTML settled prices a summarising fetch had paraphrased (legacy model name, holiday rule).
+- 2026-09-29 [CONFUSION] Ledger said MN18 cost $0.030 off-peak; DeepSeek balance fell ~$0.06 (exactly the peak price). Clocks verified; cause still open — check the provider's usage page before trusting the ledger for budgeting.

@@ -43,5 +43,7 @@ users mostly translate other languages, so Hindi-only costs (the
 - `data/epitaka_<lang>.db` (sentences, translation_remarks) and
   `data/glossary_<lang>.db`, read directly by the Epitaka app.
 - Optional prompt/response logs via `--log-dir`.
+- `data/costs.csv`: one line per AI call with tokens and USD, plus a printed
+  running total (this call / this run / all time).
 - A plain text file per sutta from `src/export_text.py`: Pāli in the target
   script, then the translation, paragraph by paragraph.

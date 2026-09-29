@@ -66,6 +66,7 @@ import urllib.parse
 import urllib.request
 
 from . import ai_openai_compat
+from . import costs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logging.getLogger("google").setLevel(logging.WARNING)
@@ -626,6 +627,7 @@ def _generate_with_retry(
     config:            object,
     estimated_tokens:  int,
     timeout:           int,
+    label:             str = "",
 ) -> tuple[object | None, str | None, str | None]:
     """
     One Gemini generateContent request with the standard retry/backoff loop:
@@ -684,14 +686,23 @@ def _generate_with_retry(
                     r = client.models.generate_content(
                         model=model_name, contents=contents, config=config,
                     )
+                    md = getattr(r, "usage_metadata", None)
+                    cached = getattr(md, "cached_content_token_count", None) or 0
+                    costs.record(model, label, {
+                        "prompt_cache_hit_tokens":  cached,
+                        "prompt_cache_miss_tokens": (getattr(md, "prompt_token_count", None) or 0) - cached,
+                        "completion_tokens":        getattr(md, "candidates_token_count", None) or 0,
+                    })
                 else:
                     # Single-turn only: the tool-calling loop stays Gemini-only.
-                    text, status, err = ai_openai_compat.chat(
+                    text, status, err, usage = ai_openai_compat.chat(
                         provider, key, model_name,
                         config.system_instruction or "",
                         contents[0].parts[0].text,
                         config.max_output_tokens, timeout,
                     )
+                    if usage:  # billed even when the reply had no usable text
+                        costs.record(model, label, usage)
                     if text is None:
                         raise CompatError(status, err)
                     r = types.SimpleNamespace(text=text)
@@ -755,6 +766,7 @@ def call_gemini(
     max_output_tokens:  int = 65_536,
     timeout:            int = 300,
     used_model:         list | None = None,
+    label:              str = "",
 ) -> str | None:
     """
     Send one prompt to Gemini and return the raw response text, or None if
@@ -796,7 +808,7 @@ def call_gemini(
         role="user", parts=[genai_types.Part.from_text(text=prompt)],
     )]
     response, _, model_used = _generate_with_retry(
-        rotator, pool, contents, config, estimated_tokens, timeout,
+        rotator, pool, contents, config, estimated_tokens, timeout, label,
     )
     if response is None:
         return None
@@ -818,6 +830,7 @@ def call_gemini_with_tools(
     max_rounds:        int = 12,
     log:               callable = lambda msg: None,
     used_model:        list | None = None,
+    label:             str = "",
 ) -> str | None:
     """
     Function-calling loop on top of _generate_with_retry.
@@ -864,7 +877,7 @@ def call_gemini_with_tools(
     tool_rounds = 0
     while True:
         response, _, model_used = _generate_with_retry(
-            rotator, pool, contents, config, estimated, timeout,
+            rotator, pool, contents, config, estimated, timeout, label,
         )
         if response is None:
             return None
@@ -889,7 +902,7 @@ def call_gemini_with_tools(
                     ))],
                 ))
                 response, _, model_used = _generate_with_retry(
-                    rotator, pool, contents, forced_config, estimated, timeout,
+                    rotator, pool, contents, forced_config, estimated, timeout, label,
                 )
                 if response is None:
                     return None
@@ -1087,11 +1100,12 @@ def call_ai_with_logging(
             tools=tools, tool_executor=tool_executor,
             max_output_tokens=max_output_tokens, max_rounds=max_tool_rounds,
             log=lambda msg: print(f"[AI] {msg}"), used_model=used_model,
+            label=f"{book_id} {chunk_id}",
         )
     else:
         raw = call_gemini(rotator, prompt, system_prompt, model=model,
                           models=models, max_output_tokens=max_output_tokens,
-                          used_model=used_model)
+                          used_model=used_model, label=f"{book_id} {chunk_id}")
     if raw is None:
         return None
 

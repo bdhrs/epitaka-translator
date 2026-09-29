@@ -16,7 +16,8 @@ def fake_chat(replies, calls):
     """replies: list of (text, status, error), consumed per call."""
     def _chat(provider, key, model, system_prompt, prompt, max_tokens, timeout):
         calls.append((provider, key, model, system_prompt, prompt))
-        return replies.pop(0)
+        text, status, err = replies.pop(0)
+        return text, status, err, {}
     return _chat
 
 

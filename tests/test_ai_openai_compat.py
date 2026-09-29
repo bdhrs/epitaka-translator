@@ -33,7 +33,7 @@ def test_success_sends_expected_payload(monkeypatch):
     body = {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
     monkeypatch.setattr(requests, "post", fake_post(FakeResponse(200, body), seen))
 
-    assert call() == ("ok", 200, "")
+    assert call() == ("ok", 200, "", {})
     assert seen["url"] == "https://api.deepseek.com/chat/completions"
     assert seen["headers"]["Authorization"] == "Bearer k1"
     assert seen["json"]["thinking"] == {"type": "disabled"}
@@ -54,7 +54,7 @@ def test_openrouter_has_no_thinking(monkeypatch):
 
 def test_http_429_returns_status(monkeypatch):
     monkeypatch.setattr(requests, "post", fake_post(FakeResponse(429, text="slow down"), {}))
-    text, status, error = call()
+    text, status, error, _ = call()
     assert (text, status) == (None, 429)
     assert "slow down" in error
 
@@ -62,13 +62,13 @@ def test_http_429_returns_status(monkeypatch):
 def test_http_200_error_body_without_choices(monkeypatch):
     body = {"error": {"code": 429, "message": "free tier limit"}}
     monkeypatch.setattr(requests, "post", fake_post(FakeResponse(200, body), {}))
-    text, status, error = call("openrouter")
+    text, status, error, _ = call("openrouter")
     assert (text, status) == (None, 429)
     assert "free tier limit" in error
 
 
 def test_network_error_has_no_status(monkeypatch):
     monkeypatch.setattr(requests, "post", fake_post(requests.ConnectionError("down"), {}))
-    text, status, error = call()
+    text, status, error, _ = call()
     assert (text, status) == (None, None)
     assert "ConnectionError" in error

@@ -27,10 +27,11 @@ def chat(
     prompt:        str,
     max_tokens:    int,
     timeout:       float,
-) -> tuple[str | None, int | None, str]:
+) -> tuple[str | None, int | None, str, dict]:
     """
-    Send one prompt. Returns (text, http_status, error). `text` is None on
-    any failure; `http_status` is None when no HTTP response came back.
+    Send one prompt. Returns (text, http_status, error, usage). `text` is None
+    on any failure; `http_status` is None when no HTTP response came back;
+    `usage` is the provider's token report ({} when there is none).
     """
     payload = {
         "model":      model,
@@ -50,17 +51,18 @@ def chat(
             timeout=timeout,
         )
     except requests.RequestException as e:
-        return None, None, f"{type(e).__name__}: {e}"
+        return None, None, f"{type(e).__name__}: {e}", {}
 
     if r.status_code != 200:
-        return None, r.status_code, f"HTTP {r.status_code}: {r.text[:300]}"
+        return None, r.status_code, f"HTTP {r.status_code}: {r.text[:300]}", {}
 
     try:
         body = r.json()
     except ValueError:
-        return None, r.status_code, f"non-JSON body: {r.text[:300]}"
+        return None, r.status_code, f"non-JSON body: {r.text[:300]}", {}
 
     # OpenRouter can answer HTTP 200 with an error object and no choices.
+    usage = body.get("usage") or {}
     choices = body.get("choices") or []
     text = ((choices[0].get("message") or {}).get("content") if choices else None)
     if not text:
@@ -68,5 +70,5 @@ def chat(
         finish = choices[0].get("finish_reason") if choices else None
         return None, err.get("code") or r.status_code, (
             f"no text (finish_reason={finish}, error={err.get('message')})"
-        )
-    return text, r.status_code, ""
+        ), usage
+    return text, r.status_code, "", usage

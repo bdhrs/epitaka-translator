@@ -299,6 +299,16 @@ either provider removes that key (402 is DeepSeek's "insufficient balance").
 The calls go through `src/common/ai_openai_compat.py` (single-turn only; tool
 calling stays Gemini-only).
 
+### Cost ledger
+
+Every AI call appends one line to `data/costs.csv` (time, model, book +
+section, cached / uncached input tokens, output tokens, USD) and prints
+`[cost] <model> $X this call, $Y this run, $Z all time`. DeepSeek is priced
+from `PRICES` in `src/common/costs.py` (half price off-peak); OpenRouter uses
+the cost it reports per call; Gemini is logged at $0 (free keys). Chinese
+public holidays are off-peak for DeepSeek but are not detected, so those days
+are overstated.
+
 ## Running
 
 All commands run from this `translator/` directory (scripts live under
