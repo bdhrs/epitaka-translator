@@ -22,10 +22,11 @@ with [uv](https://docs.astral.sh/uv/) (required), and loops the translation unti
 
 ## Just commands
 
-The `justfile` holds the two everyday commands (needs [just](https://just.systems)):
+The `justfile` holds the three everyday commands (needs [just](https://just.systems)):
 
 ```bash
 just run kn       # translate the whole canon into Kannada with DeepSeek, from the beginning
+just next kn      # translate only the next unfinished book, then stop
 just export kn    # write everything translated so far to data/export_kn.txt
 ```
 
@@ -34,6 +35,9 @@ just export kn    # write everything translated so far to data/export_kn.txt
   translated, prints progress and `[cost]` lines as it goes, and keeps looping
   until everything is done (sleeping 3 h whenever the keys run out). Stop it
   with Ctrl+C and run it again later — it resumes where it stopped.
+- `just next <lang>` does the same for one book only: the first book in the
+  preset order that still has untranslated lines. It stops when that book is
+  done, so run it again for the book after.
 - `just export <lang>` writes one plain text file with every translated
   paragraph so far, in canon order: a heading per book, then for each
   paragraph the Pāli in the target language's script, the translation, and a
@@ -345,12 +349,16 @@ python src/book_translator.py --lang si --books preset
 # Just two books, paragraphs 1-700, 4 paragraphs per chunk:
 python src/book_translator.py --lang en --books Sp-i,Sp-ii --start 1 --end 700
 
+# Only the first preset book that still has untranslated lines:
+python src/book_translator.py --lang kn --books next
+
 # Re-translate everything (default resumes only missing lines):
 python src/book_translator.py --lang th --books preset --overwrite
 
 # Hands-off mode: data check + 3h-retry loop on key exhaustion:
 ./runner.sh si gemini-3.7-flash
 ./runner.sh si            # fallback model chain
+./runner.sh si "" next    # next unfinished book only, fallback chain
 ```
 
 Useful flags: `--start/--end` (para range, `-1` = end of book),
@@ -394,6 +402,9 @@ sub-commentaries, then histories, grammars, and handbooks. Order matters:
 later books reuse earlier books' translations as in-prompt reference
 (translated mūla/aṭṭhakathā context, glossary memory), so translating out of
 order gives poorer terminology consistency.
+
+`--books next` picks one book from the same list: the first that still has
+an untranslated line (lines under 3 characters of Pāli do not count).
 
 ## Data files and downloads
 

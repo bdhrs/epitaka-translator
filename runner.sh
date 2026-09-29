@@ -2,10 +2,11 @@
 #
 # runner.sh — continuous translation loop for the epitaka translator.
 #
-#   ./runner.sh [lang] [model]
+#   ./runner.sh [lang] [model] [books]
 #
 #   ./runner.sh si "gemini-3.7-flash"   # Sinhala, pinned model
 #   ./runner.sh si                      # Sinhala, model fallback chain
+#   ./runner.sh si "" next              # Sinhala, next unfinished book only
 #
 # What it does:
 #   1. Ensures the required SQLite data files exist in ./data (downloading
@@ -26,6 +27,7 @@ cd "$SCRIPT_DIR"
 # ---------------------------------------------------------------------------
 LANG_CODE="${1:-}"
 MODEL_NAME="${2:-}"
+BOOKS="${3:-preset}"
 
 if [ -z "$LANG_CODE" ]; then
     read -rp "Enter target language code (e.g., si, th, en): " LANG_CODE
@@ -161,7 +163,7 @@ while true; do
     # Using tee to print output live AND capture it in a temporary log file
     TEMP_LOG=$(mktemp)
     # -u: unbuffered, or tee holds the progress lines back in big batches.
-    python -u src/book_translator.py --lang "$LANG_CODE" --books preset "${MODEL_ARGS[@]}" 2>&1 | tee "$TEMP_LOG"
+    python -u src/book_translator.py --lang "$LANG_CODE" --books "$BOOKS" "${MODEL_ARGS[@]}" 2>&1 | tee "$TEMP_LOG"
 
     EXIT_CODE=${PIPESTATUS[0]}
 

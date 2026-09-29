@@ -8,6 +8,9 @@ book_translator.py — Standalone "translate a whole book, part by part" runner.
     # Use the preset book list:
     python book_translator.py --lang en --books preset
 
+    # Only the first preset book that is not finished:
+    python book_translator.py --lang en --books next
+
     # Build glossary only from already-translated books (no new translations):
     python book_translator.py --lang vi --books Sp-i,Sp-ii --glossary-only
 
@@ -1388,6 +1391,16 @@ def ensure_confidence_columns(epitaka_db: str):
 # Main
 # ══════════════════════════════════════════════════════════════════
 
+def next_unfinished_book(epitaka_db: str, lang_db: str) -> str | None:
+    """First preset book that still has a pending sentence, or None."""
+    for book_id in (b.strip() for b in PRESET_BOOKS.split(",") if b.strip()):
+        # Same pending rule as the translation run itself, so "next" never
+        # picks a book the run would then find nothing to do in.
+        if fetch_paragraphs_range(epitaka_db, book_id, 1, sys.maxsize, False, lang_db):
+            return book_id
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -1401,7 +1414,8 @@ def main() -> int:
         "--books", required=True,
         help=(
             'Comma-separated book_ids to translate, e.g. "Sp-i,Sp-ii". '
-            'Use "preset" to run the full preset list.'
+            'Use "preset" to run the full preset list, or "next" for only '
+            'the first preset book that is not finished.'
         ),
     )
     parser.add_argument("--start",          type=int, default=1,   help="first para_id (applies to every book, default 1)")
@@ -1460,6 +1474,13 @@ def main() -> int:
     if args.books.strip().lower() == "preset":
         book_list = [b.strip() for b in PRESET_BOOKS.split(",") if b.strip()]
         print(f"Using preset: {len(book_list)} books.")
+    elif args.books.strip().lower() == "next":
+        book = next_unfinished_book(epitaka_db, lang_db)
+        if book is None:
+            print("Every preset book is finished.")
+            return 0
+        book_list = [book]
+        print(f"Next unfinished preset book: {book}.")
     else:
         book_list = [b.strip() for b in args.books.split(",") if b.strip()]
 
