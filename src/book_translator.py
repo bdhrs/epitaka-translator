@@ -3,16 +3,13 @@ book_translator.py — Standalone "translate a whole book, part by part" runner.
 
     # Translate books:
     python book_translator.py --lang en --books Sp-i,Sp-ii --start 615 --end 700 \
-        --part-size 4 --max-tokens 3000 --log-dir /tmp/book_logs
+        --max-tokens 3000 --log-dir /tmp/book_logs
 
     # Use the preset book list:
     python book_translator.py --lang en --books preset
 
     # Only the first preset book that is not finished:
     python book_translator.py --lang en --books next
-
-    # Build glossary only from already-translated books (no new translations):
-    python book_translator.py --lang vi --books Sp-i,Sp-ii --glossary-only
 
 What it does
 ------------

@@ -1,24 +1,22 @@
 # Epitaka Translator
 
-> Databases (`epitaka.db`, `dpd-dictionary.db`, `epitaka_en/th/si.db`,
-> `epitaka_my_nissaya.db`):
-> https://github.com/dhammanana/epitaka_app/releases/tag/latest
+> Databases: https://github.com/dhammanana/epitaka_app/releases/tag/latest
 
 Translate Pāli Theravāda books (Tipiṭaka, commentaries, sub-commentaries) into
-modern languages with Gemini, one book at a time. Translations accumulate in
+modern languages with Gemini, DeepSeek or OpenRouter, one book at a time. Translations accumulate in
 per-language SQLite files that the Epitaka app / web server reads directly.
 
 ## Quickstart — translate to Vietnamese
 
 ```bash
-git clone <this-repo> && cd translator
-cp .env.example .env   # then add your GEMINI_KEY_<N> lines to .env
+git clone <this-repo> && cd epitaka-translator
+cp .env.example .env   # then add your API keys to .env
 ./runner.sh vi         # data, venv, and dependencies are set up automatically
 ```
 
-That's it: the runner downloads any missing database files, syncs `.venv`
-with [uv](https://docs.astral.sh/uv/) (required), and loops the translation until done (sleeping
-3 h and resuming whenever all API keys are exhausted). Details below.
+The runner downloads any missing database files, syncs `.venv` with
+[uv](https://docs.astral.sh/uv/) (required), and loops until done — see
+"Just commands" below.
 
 ## Just commands
 
@@ -60,7 +58,7 @@ just export kn    # write everything translated so far to data/export_kn.txt
    previous paragraph, translated mūla/aṭṭhakathā references, parallel human
    translations (English/Thai/Sinhala), Myanmar nissaya gloss, and the
    sentences to translate.
-5. **Call Gemini.** The model must return JSON with exactly three keys:
+5. **Call the model.** The model must return JSON with exactly three keys:
    `translations` (one per sentence, each with `confidence: high|low` and an
    optional `confidence_note`), `glossary` (new Pāli-stem → translation
    terms), `remarks` (genuine conflicts between sources only).
@@ -140,10 +138,7 @@ each commentary consistent with the root passage it explains.
   another. Grammar particles (*ca, pi, eva*, …) are never stored.
 
 Honest status: this block underperforms today — the model still sometimes
-renders a term with a new wording instead of the glossary one. Part of the
-cause was mechanical and is now fixed: the prompt builder briefly wasn't
-receiving the glossary path at all, so prompts went out with an empty
-glossary block (visible in the older `examples/`). Remaining mitigations are
+renders a term with a new wording instead of the glossary one. Mitigations are
 the 3-variant cap, the "reuse rather than add" prompt rules on both
 the translation and glossary sides, and duplicate upserts on save. Improving
 glossary adherence is the main open item in prompt quality.
@@ -192,8 +187,8 @@ special rule for rendering `<b>`-wrapped Pāli terms.
 ### Nissaya + previous paragraph
 
 - `NissayaContext` adds the Myanmar **word-by-word gloss** (Pāli words
-  romanised to IAST with Aksharamukha — before it was a dependency this
-  silently did nothing, which is why `examples/` show Myanmar script) for each line, with edition labels where several exist — the most
+  romanised to IAST with Aksharamukha) for each line, with edition labels
+  where several exist — the most
   literal layer of help, and a listed trigger for `low` confidence when it is
   missing.
 - `PreviousTranslationContext` carries the immediately preceding paragraph's
@@ -218,15 +213,15 @@ real model output is occasionally loose JSON, e.g. unescaped quotes —
 `parse_ai_json_response` in `ai_client.py` salvages complete items instead
 of discarding the chunk).
 
-One caveat: these examples were captured before a bug fix, so their
-`ESTABLISHED GLOSSARY` block reads `(no glossary DB configured)` — the
-prompt builder wasn't receiving the glossary path (see "Glossary" above).
-Current code fills that block; expect it populated in newly generated logs.
+One caveat: these examples are older than two fixes. Their
+`ESTABLISHED GLOSSARY` block reads `(no glossary DB configured)` and their
+nissaya block is still in Myanmar script; newly generated logs have both
+fixed.
 
 Generate your own pair for any chunk with `--log-dir`:
 
 ```bash
-python src/book_translator.py --lang si --books Dhp --max-parts 1 --log-dir ./examples
+uv run src/book_translator.py --lang si --books Dhp --max-parts 1 --log-dir ./examples
 ```
 
 Related tools in `src/`:
@@ -245,20 +240,22 @@ For example, MN10 in Kannada:
 
 Shared infrastructure lives in `src/common/`: `common_utils.py` (DB paths,
 schema, glossary upserts, stem lookup, script-bleed detection),
-`ai_client.py` (all Gemini calls, key rotation, retries, JSON parsing),
-`context_builders.py` (prompt context blocks).
+`ai_client.py` (all AI calls, key rotation, retries, JSON parsing),
+`ai_openai_compat.py` (the DeepSeek/OpenRouter call), `costs.py` (cost
+ledger), `context_builders.py` (prompt context blocks).
 
 ## Setup
 
 ```bash
-cd translator
+cd epitaka-translator
 
 # 1. Environment + dependencies (uv is required; ./runner.sh runs this itself)
 uv sync                # .venv from pyproject.toml + uv.lock (adds pytest)
 
 # 2. API keys
 cp .env.example .env
-# then edit .env and add at least one GEMINI_KEY_<N> (see below)
+# then edit .env and add at least one GEMINI_KEY_<N>, DEEPSEEK_KEY_<N>
+# or OPENROUTER_KEY_<N> (see below)
 
 # 3. Data files (optional — runner.sh downloads these automatically)
 #    ./data/epitaka.db              source Pāli texts + dictionary tables
@@ -334,26 +331,23 @@ are overstated.
 
 ## Running
 
-All commands run from this `translator/` directory (scripts live under
-`src/` since the reorganisation):
+All commands run from the repo root:
 
 ```bash
-source .venv/bin/activate   # or prefix each command with `uv run` instead of `python`
-
 # Translate into Sinhala, full preset book order, pinned model:
-python src/book_translator.py --lang si --books preset --model gemini-3.7-flash
+uv run src/book_translator.py --lang si --books preset --model gemini-3.7-flash
 
 # Same, but with the automatic model fallback chain (recommended):
-python src/book_translator.py --lang si --books preset
+uv run src/book_translator.py --lang si --books preset
 
-# Just two books, paragraphs 1-700, 4 paragraphs per chunk:
-python src/book_translator.py --lang en --books Sp-i,Sp-ii --start 1 --end 700
+# Just two books, paragraphs 1-700:
+uv run src/book_translator.py --lang en --books Sp-i,Sp-ii --start 1 --end 700
 
 # Only the first preset book that still has untranslated lines:
-python src/book_translator.py --lang kn --books next
+uv run src/book_translator.py --lang kn --books next
 
 # Re-translate everything (default resumes only missing lines):
-python src/book_translator.py --lang th --books preset --overwrite
+uv run src/book_translator.py --lang th --books preset --overwrite
 
 # Hands-off mode: data check + 3h-retry loop on key exhaustion:
 ./runner.sh si gemini-3.7-flash
@@ -373,7 +367,8 @@ default 3000), `--max-parts` (stop after N sections — for testing),
 Any code in `LANG_NAMES` (`src/common/common_utils.py`) works; the name is
 injected into the prompt so the model knows its target language. English,
 Thai, and Sinhala additionally serve as **parallel-translation references**
-for every other language.
+for every other language; Indian targets use Hindi in place of Thai (see
+"Parallel translations" above).
 
 | Code | Language | Code | Language | Code | Language |
 |---|---|---|---|---|---|
@@ -392,6 +387,22 @@ for every other language.
 | `cs` | Czech | `hu` | Hungarian | `sv` | Swedish |
 | `da` | Danish | `fi` | Finnish | `no` | Norwegian |
 | `ar` | Arabic | `he` | Hebrew | `fa` | Persian |
+
+#### Indian languages: status
+
+| Code | Language | Status |
+|---|---|---|
+| `hi` | Hindi | Done |
+| `ta` | Tamil | Done |
+| `ne` | Nepali | Done |
+| `kn` | Kannada | In progress |
+| `te` | Telugu | Not yet done |
+| `ml` | Malayalam | Not yet done |
+| `mr` | Marathi | Not yet done |
+| `bn` | Bengali | Not yet done |
+| `gu` | Gujarati | Not yet done |
+| `pa` | Punjabi | Not yet done |
+| `or` | Odia | Not yet done |
 
 ### `--books preset` order
 
@@ -431,14 +442,17 @@ legacy folder is used as a fallback so existing checkouts keep working.
 ## Layout
 
 ```text
-translator/
+epitaka-translator/
 ├── runner.sh            # data check + continuous translation loop
+├── justfile             # everyday commands: run, next, export
 ├── pyproject.toml       # uv project and dependencies (+ uv.lock); `uv run pytest` runs tests/
 ├── .env.example         # copy to .env, add GEMINI_KEY_<N> / DEEPSEEK_KEY_<N> / OPENROUTER_KEY_<N>
 ├── README.md            # this file
+├── AGENTS.md            # notes for coding agents
+├── kamma/               # project notes, specs and plans
 ├── data/                # SQLite DBs (downloaded by runner.sh if missing)
 ├── examples/            # real prompt/response pairs (see above)
-├── tests/               # pytest tests for the provider and Hindi-reference code
+├── tests/               # pytest tests (`timeout 60 uv run pytest -q`)
 └── src/
     ├── book_translator.py    # main translation run
     ├── glossary_builder.py   # glossary from existing translations
@@ -448,8 +462,9 @@ translator/
     ├── export_text.py        # Pāli (target script) + translation as plain text
     └── common/
         ├── common_utils.py     # DB paths/schema, glossary, script-bleed
-        ├── ai_client.py        # Gemini calls, key rotation, retries
+        ├── ai_client.py        # AI calls, key rotation, retries
         ├── ai_openai_compat.py # one DeepSeek/OpenRouter chat call
+        ├── costs.py            # cost ledger (data/costs.csv)
         ├── ai_client_bai.py    # alternate provider client (verification)
         └── context_builders.py # prompt context blocks
 ```
