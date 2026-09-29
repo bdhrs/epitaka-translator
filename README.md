@@ -335,7 +335,7 @@ All commands run from the repo root:
 
 ```bash
 # Translate into Sinhala, full preset book order, pinned model:
-uv run src/book_translator.py --lang si --books preset --model gemini-3.7-flash
+uv run src/book_translator.py --lang si --books preset --model gemini-3.8-flash
 
 # Same, but with the automatic model fallback chain (recommended):
 uv run src/book_translator.py --lang si --books preset
@@ -350,7 +350,7 @@ uv run src/book_translator.py --lang kn --books next
 uv run src/book_translator.py --lang th --books preset --overwrite
 
 # Hands-off mode: data check + 3h-retry loop on key exhaustion:
-./runner.sh si gemini-3.7-flash
+./runner.sh si gemini-3.8-flash
 ./runner.sh si            # fallback model chain
 ./runner.sh si "" next    # next unfinished book only, fallback chain
 ```

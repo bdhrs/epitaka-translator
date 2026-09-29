@@ -4,7 +4,7 @@
 #
 #   ./runner.sh [lang] [model] [books]
 #
-#   ./runner.sh si "gemini-3.7-flash"   # Sinhala, pinned model
+#   ./runner.sh si "gemini-3.8-flash"   # Sinhala, pinned model
 #   ./runner.sh si                      # Sinhala, model fallback chain
 #   ./runner.sh si "" next              # Sinhala, next unfinished book only
 #

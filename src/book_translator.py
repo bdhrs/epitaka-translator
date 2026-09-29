@@ -141,6 +141,7 @@ DEFAULT_LOG_DIR = "/tmp/book_translator_logs"
 # removed from the pool and the NEXT model takes over automatically
 # (see ai_client.ModelPool). Pass --model to pin a single model instead.
 FALLBACK_MODEL_CHAIN = [
+    "gemini-3.8-flash",
     "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
@@ -1424,7 +1425,7 @@ def main() -> int:
     parser.add_argument("--glossary-db",    default="",
                         help="Override path to glossary_<lang>.db (default: auto-derived next to epitaka.db).")
     parser.add_argument("--model",          default=None,
-                        help="Single model to use (e.g. gemini-3.7-flash, "
+                        help="Single model to use (e.g. gemini-3.8-flash, "
                              "deepseek:deepseek-v4-flash, openrouter:<model-id>). "
                              "If omitted, the FALLBACK_MODEL_CHAIN is tried in order, "
                              "falling over to the next model when one is rate-limited.")

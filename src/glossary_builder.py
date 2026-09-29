@@ -81,7 +81,7 @@ load_dotenv()
 EPITAKA_DB   = cu.EPITAKA_DB
 # NOTE: no bare glossary.db anywhere — main() always derives the per-language
 # glossary_<lang>.db via cu.glossary_db_path(epitaka_db, args.lang).
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-preview-05-20")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 DEFAULT_LOG_DIR = "/tmp/build_glossary_logs"
 DEFAULT_CHUNK_SIZE = 60   # sentence pairs per Gemini call
 

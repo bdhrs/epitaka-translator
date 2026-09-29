@@ -10,7 +10,7 @@ For every level-10 heading section of a mūla book (e.g. M-i), this script:
      Pāli + English translation and every line labelled [book:para:line].
   3. Adds Pāli word definitions for the rarest words in the section
      (PaliDefsContext, capped to a few words/definitions).
-  4. Sends everything to Gemini (gemini-3.7-flash), asking it to write
+  4. Sends everything to Gemini (gemini-3.8-flash), asking it to write
      comprehensive study material in English: ALL information covered, no
      compression, full reasoning sequences preserved for any debated or
      controversial point (with a final “🔎 Controversies, questions & things
@@ -71,6 +71,7 @@ DEFAULT_LOG_DIR = "/tmp/study_builder_logs"
 # model's quota is exhausted (3× HTTP 429) it is removed from the list and
 # the NEXT model takes over automatically (see ai_client.ModelPool).
 MODEL_FALLBACK_LIST = [
+    "gemini-3.8-flash",
     "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
