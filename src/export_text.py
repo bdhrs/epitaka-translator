@@ -1,8 +1,9 @@
 """
 export_text.py — write a plain text file of source Pāli and its translation,
 paragraph by paragraph: the Pāli in the target language's script, then the
-translation, then a blank line.
+translation, then a blank line. Only translated paragraphs are written.
 
+    uv run src/export_text.py --lang kn --out kn.txt            # everything so far, canon order
     uv run src/export_text.py --lang kn --book M-i --start 280 --end 410 --out mn10_kn.txt
 """
 
@@ -25,11 +26,22 @@ PALI_SCRIPTS = {
 }
 
 _TAG = re.compile(r"<[^>]+>")
+_BOOK_CODE = re.compile(r"^[A-Z]{2}\d+-")
 
 
 def _ascii_digits(text: str) -> str:
     """೧೦೫ -> 105: Aksharamukha converts digits too; the user wants 0-9 (2026-09-28)."""
     return "".join(str(unicodedata.digit(c)) if c.isdigit() else c for c in text)
+
+
+def _to_script(text: str, script: str | None) -> str:
+    """Roman Pāli -> the given Aksharamukha script (ASCII digits); unchanged when no script."""
+    if not script:
+        return text
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)  # noisy on first import
+        from aksharamukha import transliterate
+    return _ascii_digits(transliterate.process("IASTPali", script, text))
 
 
 def _read(path: str, sql: str, args: tuple) -> list[tuple]:
@@ -53,33 +65,44 @@ def export_text(epitaka_db: str, lang: str, book: str, start: int, end: int,
     trans = _paragraphs(_read(cu.lang_db_path(epitaka_db, lang),
                               sql.format(col="translation"), (book, start, end)))
 
-    script = script or PALI_SCRIPTS.get(lang)
-    if script:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)  # noisy on first import
-            from aksharamukha import transliterate
-        pali = {p: _ascii_digits(transliterate.process("IASTPali", script, t))
-                for p, t in pali.items()}
+    pali = {p: _to_script(t, script or PALI_SCRIPTS.get(lang)) for p, t in pali.items() if p in trans}
 
-    return "".join(f"{pali[p]}\n{trans.get(p, '')}\n\n" for p in sorted(pali))
+    return "".join(f"{pali[p]}\n{trans[p]}\n\n" for p in sorted(pali))
+
+
+def export_all(epitaka_db: str, lang: str, script: str | None = None) -> str:
+    """Every book with any translation, in canon order, each under its name."""
+    done = {b for (b,) in _read(cu.lang_db_path(epitaka_db, lang),
+                                "SELECT DISTINCT book_id FROM sentences WHERE translation <> ''", ())}
+    books = _read(epitaka_db, "SELECT book_id, book_name FROM books ORDER BY id", ())
+    script = script or PALI_SCRIPTS.get(lang)
+    return "".join(
+        # "MN1-Mūlapaṇṇāsapāḷi" -> "Mūlapaṇṇāsapāḷi": the reader sees only the target script.
+        _to_script(_BOOK_CODE.sub("", name or book), script) + "\n\n"
+        + export_text(epitaka_db, lang, book, 0, 10**9, script)
+        for book, name in books if book in done
+    )
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
     ap.add_argument("--lang", required=True, help='Translation language code, e.g. "kn".')
-    ap.add_argument("--book", required=True, help='Book id, e.g. "M-i".')
-    ap.add_argument("--start", type=int, required=True, help="First para_id.")
-    ap.add_argument("--end", type=int, required=True, help="Last para_id (inclusive).")
+    ap.add_argument("--book", help='Book id, e.g. "M-i" (default: every translated book).')
+    ap.add_argument("--start", type=int, default=0, help="First para_id (default: book start).")
+    ap.add_argument("--end", type=int, default=10**9, help="Last para_id, inclusive (default: book end).")
     ap.add_argument("--out", required=True, help="Output .txt path.")
     ap.add_argument("--script", default=None,
                     help="Aksharamukha script for the Pāli (default: the target language's script).")
     ap.add_argument("--epitaka-db", default=cu.EPITAKA_DB)
     args = ap.parse_args()
 
-    text = export_text(args.epitaka_db, args.lang, args.book, args.start, args.end, args.script)
+    if args.book:
+        text = export_text(args.epitaka_db, args.lang, args.book, args.start, args.end, args.script)
+    else:
+        text = export_all(args.epitaka_db, args.lang, args.script)
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(text)
-    print(f"Wrote {text.count(chr(10) * 2)} paragraphs to {args.out}")
+    print(f"Wrote {args.out}")
     return 0
 
 

@@ -11,3 +11,7 @@
 - 2026-09-29 [WORKFLOW] costs.LEDGER pointed at the real data/costs.csv at import time; a tests/conftest.py autouse fixture now redirects it before any test can write there.
 - 2026-09-29 [POSITIVE] Reading the pricing page's raw HTML settled prices a summarising fetch had paraphrased (legacy model name, holiday rule).
 - 2026-09-29 [CONFUSION] Ledger said MN18 cost $0.030 off-peak; DeepSeek balance fell ~$0.06 (exactly the peak price). Clocks verified; cause still open — check the provider's usage page before trusting the ledger for budgeting.
+- 2026-09-29 [REPEATED] Proposed a service, status/log/cost commands and an off-peak scheduler when the user asked only for "some just commands"; the user had to say "i dint ask for all that". Answer the literal request first.
+- 2026-09-29 [REPEATED] Wrote export headings as the database's Roman book names ("MN1-Mūlapaṇṇāsapāḷi (M-i)") after the user had already ruled out Roman in Kannada output; the rule covers everything a reader sees, not just translations.
+- 2026-09-29 [WORKFLOW] runner.sh piped the translator through tee without `python -u`, so the user saw nothing but the key-loading line while it was really translating; check live output through the same pipe the user runs.
+- 2026-09-29 [WORKFLOW] `uv sync --no-dev` in the runner and `uv run pytest` undid each other every time (uninstall/reinstall pytest); a review nit applied without weighing that side effect.

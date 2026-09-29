@@ -20,6 +20,25 @@ That's it: the runner downloads any missing database files, syncs `.venv`
 with [uv](https://docs.astral.sh/uv/) (required), and loops the translation until done (sleeping
 3 h and resuming whenever all API keys are exhausted). Details below.
 
+## Just commands
+
+The `justfile` holds the two everyday commands (needs [just](https://just.systems)):
+
+```bash
+just run kn       # translate the whole canon into Kannada with DeepSeek, from the beginning
+just export kn    # write everything translated so far to data/export_kn.txt
+```
+
+- `just run <lang>` runs `./runner.sh <lang> deepseek:deepseek-v4-flash`: it
+  works through the preset book order (Dīgha Nikāya first), skips lines already
+  translated, prints progress and `[cost]` lines as it goes, and keeps looping
+  until everything is done (sleeping 3 h whenever the keys run out). Stop it
+  with Ctrl+C and run it again later — it resumes where it stopped.
+- `just export <lang>` writes one plain text file with every translated
+  paragraph so far, in canon order: a heading per book, then for each
+  paragraph the Pāli in the target language's script, the translation, and a
+  blank line. For Indian languages nothing in it is in Roman letters.
+
 ## How it works
 
 `src/book_translator.py` translates a whole book, part by part:

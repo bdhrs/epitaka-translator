@@ -11,7 +11,8 @@
   epitaka_app GitHub releases by `runner.sh`.
 - LLM providers: Gemini, DeepSeek and OpenRouter, one key rotation and one
   fallback model chain; non-Gemini models are written `provider:model`.
-- Linux desktop; long runs go through `runner.sh`.
+- Linux desktop; long runs go through `runner.sh`, usually via `just run <lang>`
+  (DeepSeek pinned); `just export <lang>` writes everything translated so far.
 
 ## Who This Is For
 Me, running translations into new languages. User, 2026-09-28: "all my work

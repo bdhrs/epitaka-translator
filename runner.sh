@@ -132,7 +132,7 @@ if ! command -v uv >/dev/null 2>&1; then
     echo "[PYTHON] ERROR: uv is required (https://docs.astral.sh/uv/getting-started/installation/)." >&2
     exit 1
 fi
-uv sync --no-dev --project "$SCRIPT_DIR" || exit 1
+uv sync --project "$SCRIPT_DIR" || exit 1
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/.venv/bin/activate"
 
@@ -160,7 +160,8 @@ while true; do
     # Run command and capture output while streaming it to the terminal
     # Using tee to print output live AND capture it in a temporary log file
     TEMP_LOG=$(mktemp)
-    python src/book_translator.py --lang "$LANG_CODE" --books preset "${MODEL_ARGS[@]}" 2>&1 | tee "$TEMP_LOG"
+    # -u: unbuffered, or tee holds the progress lines back in big batches.
+    python -u src/book_translator.py --lang "$LANG_CODE" --books preset "${MODEL_ARGS[@]}" 2>&1 | tee "$TEMP_LOG"
 
     EXIT_CODE=${PIPESTATUS[0]}
 
