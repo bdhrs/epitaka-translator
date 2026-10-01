@@ -15,3 +15,6 @@
 - 2026-09-29 [REPEATED] Wrote export headings as the database's Roman book names ("MN1-Mūlapaṇṇāsapāḷi (M-i)") after the user had already ruled out Roman in Kannada output; the rule covers everything a reader sees, not just translations.
 - 2026-09-29 [WORKFLOW] runner.sh piped the translator through tee without `python -u`, so the user saw nothing but the key-loading line while it was really translating; check live output through the same pipe the user runs.
 - 2026-09-29 [WORKFLOW] `uv sync --no-dev` in the runner and `uv run pytest` undid each other every time (uninstall/reinstall pytest); a review nit applied without weighing that side effect.
+- 2026-10-01 [REPEATED] User called the Gemini-fallback plan over-engineered, then the cut-down version under-engineered; state the concrete behaviour in one sentence (what happens on the tenth 503, which models) and build that, instead of offering plan variants.
+- 2026-10-01 [CONFUSION] Reported "five Gemini keys loaded" by counting env var names, but three were empty lines; count only keys with a value before telling the user how many are in play.
+- 2026-10-01 [POSITIVE] Two reviewers (CodeRabbit and GLM) independently flagged the same scratch-folder delete; undoing each fix alone and watching a test fail confirmed every new guard.

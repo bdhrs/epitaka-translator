@@ -2,8 +2,8 @@
 costs.py — price every AI call and keep a running total in a CSV ledger
 (`costs.csv` next to epitaka.db). One line per call; prints this call / this
 run / all time. OpenRouter reports each call's cost itself (`usage.cost`,
-USD), which is used as-is. Other models are priced from PRICES; models without
-an entry (all Gemini models — free keys) are logged at $0.
+USD), which is used as-is. DeepSeek is priced from PRICES and Gemini from
+_gemini_price; a model without a price is logged at $0 with a warning.
 """
 
 import csv
@@ -22,6 +22,15 @@ PRICES = {
     "deepseek:deepseek-v4-flash": (0.006, 0.30, 1.20),
 }
 
+# Gemini, standard paid tier, USD per 1M tokens: (cached input, input, output
+# including thinking). From ai.google.dev/gemini-api/docs/pricing, page dated
+# 2026-09-24, checked 2026-09-30. Only models read off that page are priced.
+_FLASH_2026 = (0.075, 0.75, 3.75)
+_FLASH_2027 = (0.15, 1.50, 7.50)
+_FLASH_PRICE_CHANGE = datetime(2027, 1, 1, tzinfo=timezone.utc)
+_PRO_UP_TO_200K = (0.20, 2.00, 12.00)
+_PRO_OVER_200K = (0.40, 4.00, 18.00)
+
 LEDGER = Path(cu.EPITAKA_DB).parent / "costs.csv"
 _FIELDS = ["time_utc", "model", "label", "cache_hit_tokens",
            "cache_miss_tokens", "output_tokens", "usd"]
@@ -35,9 +44,25 @@ def is_peak(t: datetime) -> bool:
     return t.weekday() < 5 and (1 <= t.hour < 4 or 6 <= t.hour < 10)
 
 
+def _gemini_price(model: str, prompt_tokens: int, t: datetime) -> tuple[float, float, float] | None:
+    if model in ("gemini-3.8-flash", "gemini-3.7-flash"):
+        return _FLASH_2026 if t < _FLASH_PRICE_CHANGE else _FLASH_2027
+    if model == "gemini-3.1-pro-preview":
+        return _PRO_UP_TO_200K if prompt_tokens <= 200_000 else _PRO_OVER_200K
+    return None
+
+
 def call_cost(model: str, usage: dict, t: datetime) -> float:
     if "cost" in usage:
         return float(usage["cost"] or 0)
+    hit_tokens = usage.get("prompt_cache_hit_tokens", 0)
+    miss_tokens = usage.get("prompt_cache_miss_tokens", 0)
+    gemini = _gemini_price(model, hit_tokens + miss_tokens, t)
+    if gemini:
+        hit, miss, out = gemini
+        # No off-peak discount: that is DeepSeek's.
+        return (hit_tokens * hit + miss_tokens * miss
+                + usage.get("completion_tokens", 0) * out) / 1_000_000
     price = PRICES.get(model)
     if not price:
         return 0.0
@@ -76,6 +101,8 @@ def record(model: str, label: str, usage: dict, t: datetime | None = None) -> fl
         usd = 0.0
     if model.startswith("openrouter:") and "cost" not in usage:
         print(f"[cost] WARNING: OpenRouter sent no cost for {model}; logging $0")
+    if model.startswith("gemini-") and _gemini_price(model, 0, t) is None:
+        print(f"[cost] WARNING: no price known for {model}; logging $0")
     if _all_time is None:
         _all_time = _ledger_total()
     _run_total += usd

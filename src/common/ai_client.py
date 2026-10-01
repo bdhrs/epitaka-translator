@@ -691,7 +691,9 @@ def _generate_with_retry(
                     costs.record(model, label, {
                         "prompt_cache_hit_tokens":  cached,
                         "prompt_cache_miss_tokens": (getattr(md, "prompt_token_count", None) or 0) - cached,
-                        "completion_tokens":        getattr(md, "candidates_token_count", None) or 0,
+                        # Google bills thinking tokens as output, but reports them separately.
+                        "completion_tokens":        (getattr(md, "candidates_token_count", None) or 0)
+                                                    + (getattr(md, "thoughts_token_count", None) or 0),
                     })
                 else:
                     # Single-turn only: the tool-calling loop stays Gemini-only.
@@ -757,6 +759,19 @@ def _generate_with_retry(
     return None, None, None
 
 
+def _gemini_config(**kwargs):
+    """
+    Build a GenerateContentConfig with the library's own function-calling
+    loop off. Tool calls are handled in call_gemini_with_tools, and leaving
+    the library's loop on makes it log a warning on every run.
+    """
+    from google.genai import types as genai_types
+    return genai_types.GenerateContentConfig(
+        automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(disable=True),
+        **kwargs,
+    )
+
+
 def call_gemini(
     rotator:            KeyRotator,
     prompt:             str,
@@ -800,7 +815,7 @@ def call_gemini(
         return None
 
     estimated_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
-    config = genai_types.GenerateContentConfig(
+    config = _gemini_config(
         system_instruction=system_prompt,
         max_output_tokens=max_output_tokens,
     )
@@ -867,7 +882,7 @@ def call_gemini_with_tools(
     contents = [genai_types.Content(
         role="user", parts=[genai_types.Part.from_text(text=prompt)],
     )]
-    config = genai_types.GenerateContentConfig(
+    config = _gemini_config(
         system_instruction=system_prompt,
         tools=tools or [],
         max_output_tokens=max_output_tokens,
@@ -888,7 +903,7 @@ def call_gemini_with_tools(
             if tool_rounds > max_rounds + 1:
                 log(f"[tools] model kept calling tools past the {max_rounds}-round "
                     f"cap; forcing a final answer with tools disabled.")
-                forced_config = genai_types.GenerateContentConfig(
+                forced_config = _gemini_config(
                     system_instruction=system_prompt,
                     tools=[],
                     max_output_tokens=max_output_tokens,

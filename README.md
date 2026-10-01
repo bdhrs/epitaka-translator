@@ -20,12 +20,15 @@ The runner downloads any missing database files, syncs `.venv` with
 
 ## Just commands
 
-The `justfile` holds the three everyday commands (needs [just](https://just.systems)):
+The `justfile` holds the everyday commands (needs [just](https://just.systems)):
 
 ```bash
-just run kn       # translate the whole canon into Kannada with DeepSeek, from the beginning
-just next kn      # translate only the next unfinished book, then stop
-just export kn    # write everything translated so far to data/export_kn.txt
+just run kn           # translate the whole canon into Kannada with DeepSeek, from the beginning
+just next kn          # translate only the next unfinished book, then stop
+just next-deepseek-kn # same as `just next kn`, kept as a Kannada shortcut
+just next-gemini-kn   # same, with Gemini rotating through the Gemini keys
+just export kn        # write everything translated so far to data/export_kn.txt
+just compare-models   # run one section on three Gemini models, results in data/compare/
 ```
 
 - `just run <lang>` runs `./runner.sh <lang> deepseek:deepseek-v4-flash`: it
@@ -325,7 +328,9 @@ Every AI call appends one line to `data/costs.csv` (time, model, book +
 section, cached / uncached input tokens, output tokens, USD) and prints
 `[cost] <model> $X this call, $Y this run, $Z all time`. DeepSeek is priced
 from `PRICES` in `src/common/costs.py` (half price off-peak); OpenRouter uses
-the cost it reports per call; Gemini is logged at $0 (free keys). Chinese
+the cost it reports per call; Gemini 3.8 flash, 3.7 flash and 3.1 pro are
+priced at Google's paid-tier rates (thinking counted as output, flash rates
+double on 2027-01-01), and any other Gemini model logs $0 with a warning. Chinese
 public holidays are off-peak for DeepSeek but are not detected, so those days
 are overstated.
 
@@ -444,7 +449,7 @@ legacy folder is used as a fallback so existing checkouts keep working.
 ```text
 epitaka-translator/
 ├── runner.sh            # data check + continuous translation loop
-├── justfile             # everyday commands: run, next, export
+├── justfile             # everyday commands: run, next, compare-models, export
 ├── pyproject.toml       # uv project and dependencies (+ uv.lock); `uv run pytest` runs tests/
 ├── .env.example         # copy to .env, add GEMINI_KEY_<N> / DEEPSEEK_KEY_<N> / OPENROUTER_KEY_<N>
 ├── README.md            # this file

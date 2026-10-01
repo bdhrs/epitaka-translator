@@ -557,6 +557,39 @@ def _split_chunk_in_half(chunk: list[dict]) -> tuple[list[dict], list[dict]] | N
     return [left], [right]
 
 
+# The system prompt tells the model to return "" for a bare number such as "20.",
+# so these lines are expected to come back untranslated.
+_NUMBER_ONLY = re.compile(r"^[\d\s.,;:()\[\]–—-]+$")
+
+
+def _unanswered(chunk: list[dict], translations: list[dict]) -> list[dict]:
+    """
+    The chunk cut down to the sentences the model sent no usable translation
+    for. Models sometimes skip a line (often the last of a paragraph); those
+    lines would otherwise stay pending until the next run, which then has to
+    build one big prompt around a few scattered lines.
+    """
+    answered = set()
+    for t in translations:
+        if not (t.get("translation") or "").strip():
+            continue
+        try:
+            # The model may send ids as text ("3"); SQLite saves those fine.
+            answered.add((int(t.get("para_id")), int(t.get("line_id"))))
+        except (TypeError, ValueError):
+            pass
+    left = []
+    for para in chunk:
+        pending = [
+            s for s in para["pending"]
+            if (para["para_id"], s["line_id"]) not in answered
+            and not _NUMBER_ONLY.match((s["pali"] or "").strip())
+        ]
+        if pending:
+            left.append({**para, "pending": pending})
+    return left
+
+
 def _para_tokens(para: dict) -> int:
     text = "\n".join(s.get("pali", "") for s in para.get("pending", []))
     return ai.estimate_tokens(text)
@@ -1066,7 +1099,7 @@ def process_book(
         else:
             print(f"  -> {len(chunks)} chunk(s)")
 
-        def _handle_chunk(chunk: list[dict], depth: int = 0) -> tuple[int, int, int]:
+        def _handle_chunk(chunk: list[dict], depth: int = 0, retried: bool = False) -> tuple[int, int, int]:
             """
             Build the prompt for `chunk` and send it. If the assembled prompt
             comes out over PROMPT_TOKEN_LIMIT (estimated tokens), apply reductions in order
@@ -1158,8 +1191,8 @@ def process_book(
                           f"(limit {PROMPT_TOKEN_LIMIT:,}) — splitting into 2 smaller chunks "
                           f"(fewer sentences per call)")
                     left, right = halves
-                    u1, g1, r1 = _handle_chunk(left, depth + 1)
-                    u2, g2, r2 = _handle_chunk(right, depth + 1)
+                    u1, g1, r1 = _handle_chunk(left, depth + 1, retried)
+                    u2, g2, r2 = _handle_chunk(right, depth + 1, retried)
                     return u1 + u2, g1 + g2, r1 + r2
                 # Can't reduce sentence count any further (already one
                 # sentence) — the static context itself is the problem.
@@ -1244,6 +1277,17 @@ def process_book(
                     lang          = args.lang,
                     log_warn      = print,
                 )
+
+            # One second try only, so a line the model keeps skipping cannot loop.
+            missing = [] if retried else _unanswered(chunk, translations)
+            if missing:
+                n_missing = sum(len(p["pending"]) for p in missing)
+                print(f"  {n_missing} line(s) came back without a translation — "
+                      f"asking again for just those.")
+                u, g, r = _handle_chunk(missing, depth, retried=True)
+                saved_trans += u
+                saved_gloss += g
+                saved_rem   += r
 
             return saved_trans, saved_gloss, saved_rem
 

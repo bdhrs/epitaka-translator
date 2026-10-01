@@ -35,8 +35,29 @@ def test_deepseek_price_peak_and_off_peak(t, usd):
 
 
 def test_unpriced_models_are_free():
-    assert costs.call_cost("gemini-3.7-flash", MILLION_EACH, MON_PEAK) == 0
+    assert costs.call_cost("gemini-3.5-flash", MILLION_EACH, MON_PEAK) == 0
     assert costs.call_cost("openrouter:stealth/space-bunny-alpha", MILLION_EACH, MON_PEAK) == 0
+
+
+GEMINI_2027 = datetime(2027, 1, 1, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("model, t, usage, usd", [
+    ("gemini-3.8-flash", MON_OFFPEAK, MILLION_EACH, 4.575),
+    ("gemini-3.8-flash", MON_PEAK, MILLION_EACH, 4.575),
+    ("gemini-3.7-flash", GEMINI_2027, MILLION_EACH, 9.15),
+    ("gemini-3.1-pro-preview", MON_PEAK,
+     {"prompt_cache_hit_tokens": 100_000, "prompt_cache_miss_tokens": 50_000, "completion_tokens": 10_000}, 0.24),
+    ("gemini-3.1-pro-preview", MON_PEAK,
+     {"prompt_cache_hit_tokens": 300_000, "prompt_cache_miss_tokens": 100_000, "completion_tokens": 10_000}, 0.70),
+])
+def test_gemini_price(model, t, usage, usd):
+    assert costs.call_cost(model, usage, t) == pytest.approx(usd)
+
+
+def test_unpriced_gemini_model_warns_and_logs_zero(capsys):
+    assert costs.record("gemini-3.5-flash", "x", MILLION_EACH, MON_PEAK) == 0
+    assert "no price known for gemini-3.5-flash" in capsys.readouterr().out
 
 
 def test_record_appends_and_carries_all_time_total(capsys):
@@ -78,10 +99,10 @@ def test_billed_call_without_text_is_still_logged(monkeypatch):
     assert len(rows()) == 2
 
 
-def test_gemini_call_is_logged_at_zero_with_tokens(monkeypatch):
+def test_gemini_call_is_logged_with_thinking_counted_as_output(monkeypatch):
     monkeypatch.setenv("GEMINI_KEY_1", "g1")
     md = types.SimpleNamespace(prompt_token_count=1000, cached_content_token_count=200,
-                               candidates_token_count=300)
+                               candidates_token_count=300, thoughts_token_count=100)
 
     class FakeClient:
         def __init__(self, api_key):
@@ -95,8 +116,8 @@ def test_gemini_call_is_logged_at_zero_with_tokens(monkeypatch):
 
     assert ai.call_gemini(ai.make_rotator([]), "p", "s", models=["gemini-3.7-flash"]) == "ok"
     (row,) = rows()
-    assert (row["cache_hit_tokens"], row["cache_miss_tokens"], row["output_tokens"], row["usd"]) == \
-        ("200", "800", "300", "0.000000")
+    assert (row["cache_hit_tokens"], row["cache_miss_tokens"], row["output_tokens"]) == ("200", "800", "400")
+    assert float(row["usd"]) > 0
 
 
 def test_chat_returns_the_usage_report(monkeypatch):
