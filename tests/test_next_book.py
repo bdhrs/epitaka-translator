@@ -45,3 +45,14 @@ def test_next_none_when_all_done(tmp_path, monkeypatch):
     monkeypatch.setattr(bt, "PRESET_BOOKS", "A")
     epitaka_db, lang_db = _dbs(tmp_path, [("A", 1, 1, "evaṃ")], [("A", 1, 1, "ಹೀಗೆ")])
     assert bt.next_unfinished_book(epitaka_db, lang_db) is None
+
+
+def test_next_ignores_bare_number_lines_the_model_never_translates(tmp_path, monkeypatch):
+    monkeypatch.setattr(bt, "PRESET_BOOKS", "A,B")
+    epitaka_db, lang_db = _dbs(
+        tmp_path,
+        [("A", 1, 1, "evaṃ"), ("A", 1, 2, "20."), ("A", 1, 3, "[1]"), ("A", 1, 4, "2. 202.."),
+         ("B", 1, 1, "bhagavā")],
+        [("A", 1, 1, "ಹೀಗೆ")],
+    )
+    assert bt.next_unfinished_book(epitaka_db, lang_db) == "B"

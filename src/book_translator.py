@@ -272,6 +272,11 @@ def fetch_headings(epitaka_db: str, book_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+# The system prompt tells the model to return "" for a bare number such as "20.",
+# so such a line never gets a translation and would stay pending for ever.
+_NUMBER_ONLY = re.compile(r"^[\d\s.,;:()\[\]–—-]+$")
+
+
 def fetch_paragraphs_range(
     epitaka_db: str,
     book_id:    str,
@@ -287,7 +292,8 @@ def fetch_paragraphs_range(
     A sentence counts as pending when:
       - --overwrite was given (everything is pending, regardless of lang_db), or
       - it has no non-empty translation yet in lang_db, AND its Pāli text is
-        at least 3 characters (skips bare punctuation/number placeholder lines).
+        at least 3 characters and not just a number (skips bare punctuation/number
+        placeholder lines).
 
     Paragraphs with zero pending sentences are dropped entirely so downstream
     sectioning/chunking never has to special-case "nothing to do here".
@@ -327,6 +333,7 @@ def fetch_paragraphs_range(
                     s for s in sentences
                     if (pid, s["line_id"]) not in already_translated
                     and len((s["pali"] or "").strip()) >= 3
+                    and not _NUMBER_ONLY.match((s["pali"] or "").strip())
                 ]
             if pending:
                 result.append({
@@ -557,11 +564,6 @@ def _split_chunk_in_half(chunk: list[dict]) -> tuple[list[dict], list[dict]] | N
     return [left], [right]
 
 
-# The system prompt tells the model to return "" for a bare number such as "20.",
-# so these lines are expected to come back untranslated.
-_NUMBER_ONLY = re.compile(r"^[\d\s.,;:()\[\]–—-]+$")
-
-
 def _unanswered(chunk: list[dict], translations: list[dict]) -> list[dict]:
     """
     The chunk cut down to the sentences the model sent no usable translation
@@ -580,11 +582,7 @@ def _unanswered(chunk: list[dict], translations: list[dict]) -> list[dict]:
             pass
     left = []
     for para in chunk:
-        pending = [
-            s for s in para["pending"]
-            if (para["para_id"], s["line_id"]) not in answered
-            and not _NUMBER_ONLY.match((s["pali"] or "").strip())
-        ]
+        pending = [s for s in para["pending"] if (para["para_id"], s["line_id"]) not in answered]
         if pending:
             left.append({**para, "pending": pending})
     return left
