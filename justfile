@@ -21,3 +21,23 @@ compare-models lang="kn" book="D-i" start="971" end="978" models="gemini-3.7-fla
 # Everything translated so far: Pāli (target script) + translation, one file.
 export lang:
     uv run src/export_text.py --lang {{lang}} --out data/export_{{lang}}.txt
+
+# Translate the whole canon with Claude Sonnet via the local Claude Code CLI (subscription), in the background; resumes where it left off.
+run-claude lang="kn":
+    nohup ./runner.sh {{lang}} claude:sonnet > data/run_{{lang}}.log 2>&1 &
+    @echo "Started in the background. Watch: just tail {{lang}}   Stop: just stop {{lang}}"
+
+# Follow the background run's log (Ctrl+C stops watching, not the run).
+tail lang="kn":
+    tail -n 50 -f data/run_{{lang}}.log
+
+# Stop the background run for a language.
+stop lang="kn":
+    -pkill -f "[r]unner.sh {{lang}} "
+    -pkill -f "[b]ook_translator.py --lang {{lang}} "
+    -pkill -f "[c]laude -p --model .* --no-session-persistence .*TARGET LANGUAGE: "
+    @echo "Stopped."
+
+# Translate only the next unfinished book with Claude Sonnet via the local Claude Code CLI, then stop.
+next-claude lang="kn":
+    ./runner.sh {{lang}} claude:sonnet next

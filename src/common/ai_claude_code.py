@@ -7,8 +7,14 @@ fallback live in ai_client._generate_with_retry, not here.
 
 import json
 import os
+import re
 import subprocess
 import tempfile
+
+# A subscription usage limit can come back as plain result text with no API
+# status ("Claude AI usage limit reached|<epoch>", "You've hit your limit · resets 3pm").
+# Report it as 429 so the retry loop parks the model and runner.sh sleeps.
+_LIMIT_RE = re.compile(r"usage limit|hit your (usage )?limit|rate.?limit", re.I)
 
 
 def chat(
@@ -50,7 +56,10 @@ def chat(
         "completion_tokens":        u.get("output_tokens", 0),
     }
     if body.get("is_error") or not body.get("result"):
-        return None, body.get("api_error_status"), (
+        status = body.get("api_error_status")
+        if status is None and _LIMIT_RE.search(str(body.get("result"))):
+            status = 429
+        return None, status, (
             f"{body.get('subtype')}: {str(body.get('result'))[:300]}"
         ), usage
     return body["result"], 200, "", usage
