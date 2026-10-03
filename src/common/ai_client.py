@@ -65,7 +65,7 @@ import types
 import urllib.parse
 import urllib.request
 
-from . import ai_openai_compat
+from . import ai_claude_code, ai_openai_compat
 from . import costs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -162,7 +162,8 @@ class AllKeysExhaustedError(RuntimeError):
     """Raised when every configured Gemini API key has been permanently removed."""
 
 
-PROVIDERS = ("gemini", "deepseek", "openrouter")
+# "claude" needs no real key: CLAUDE_KEY_1 only marks the provider as wanted.
+PROVIDERS = ("gemini", "deepseek", "openrouter", "claude")
 
 
 class CompatError(RuntimeError):
@@ -551,7 +552,7 @@ def make_rotator(api_keys: list[str]) -> KeyRotator:
     env_items = [
         (k, v.strip())
         for k, v in os.environ.items()
-        if re.match(r"^(GEMINI|DEEPSEEK|OPENROUTER)_KEY_\d+$", k) and v.strip()
+        if re.match(r"^(GEMINI|DEEPSEEK|OPENROUTER|CLAUDE)_KEY_\d+$", k) and v.strip()
     ]
     # Sort by the numeric suffix so labels/logs come out in a sane order
     # (GEMINI_KEY_2 before GEMINI_KEY_10), not alphabetical/env-dict order.
@@ -697,12 +698,20 @@ def _generate_with_retry(
                     })
                 else:
                     # Single-turn only: the tool-calling loop stays Gemini-only.
-                    text, status, err, usage = ai_openai_compat.chat(
-                        provider, key, model_name,
-                        config.system_instruction or "",
-                        contents[0].parts[0].text,
-                        config.max_output_tokens, timeout,
-                    )
+                    if provider == "claude":
+                        text, status, err, usage = ai_claude_code.chat(
+                            model_name,
+                            config.system_instruction or "",
+                            contents[0].parts[0].text,
+                            timeout,
+                        )
+                    else:
+                        text, status, err, usage = ai_openai_compat.chat(
+                            provider, key, model_name,
+                            config.system_instruction or "",
+                            contents[0].parts[0].text,
+                            config.max_output_tokens, timeout,
+                        )
                     if usage:  # billed even when the reply had no usable text
                         costs.record(model, label, usage)
                     if text is None:
