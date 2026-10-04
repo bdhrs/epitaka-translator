@@ -1,3 +1,6 @@
+_default:
+    @just --list
+
 # Translate the whole canon from the beginning with DeepSeek; resumes where it left off.
 run lang:
     ./runner.sh {{lang}} deepseek:deepseek-v4-flash
