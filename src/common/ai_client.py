@@ -64,6 +64,7 @@ import time
 import types
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 
 from . import ai_claude_code, ai_openai_compat
 from . import costs
@@ -618,6 +619,9 @@ class ModelPool:
 
 def _fatal_all_keys_exhausted() -> None:
     """Alert and exit when every configured key has been permanently removed."""
+    reset = ai_claude_code.last_reset
+    if reset and reset > datetime.now(timezone.utc):
+        print(f"[RESET-AT] {int(reset.timestamp())}")  # runner.sh sleeps until this instant
     log.error("[AI] All API keys exhausted (rate-limited/invalid). Exiting.")
     send_telegram(
         "<b>AI run FATAL</b>\n"

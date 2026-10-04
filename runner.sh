@@ -159,6 +159,10 @@ WINDOW_SECONDS=18000
 MIN_WORK_SECONDS=120
 # Shortest wait after a limit hit, so a still-limited retry does not spin.
 RETRY_SECONDS=600
+# The limit message shows its reset time rounded to the minute, so wake a little after it.
+RESET_MARGIN=120
+# A reset further off than this is read as a bad parse (a weekly limit is at most 7 days).
+MAX_RESET_WAIT=691200
 WINDOW_START=0
 
 echo "Starting continuous translation loop for lang='$LANG_CODE', model='${MODEL_NAME:-(fallback chain)}'..."
@@ -197,6 +201,14 @@ while true; do
             SLEEP_FOR=$((WINDOW_START + WINDOW_SECONDS - RUN_END))
             if [ "$SLEEP_FOR" -lt "$RETRY_SECONDS" ]; then
                 SLEEP_FOR=$RETRY_SECONDS
+            fi
+            # The limit message names the exact reset time: use it when it is still ahead.
+            RESET_AT=$(grep -o '\[RESET-AT\] [0-9]*' "$TEMP_LOG" | tail -1 | grep -o '[0-9]*$')
+            if [ -n "$RESET_AT" ]; then
+                UNTIL_RESET=$((RESET_AT + RESET_MARGIN - RUN_END))
+                if [ "$UNTIL_RESET" -gt 0 ] && [ "$UNTIL_RESET" -lt "$MAX_RESET_WAIT" ]; then
+                    SLEEP_FOR=$UNTIL_RESET
+                fi
             fi
         fi
 
