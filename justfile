@@ -34,6 +34,14 @@ run-claude lang="kn":
 tail lang="kn":
     tail -n 50 -f data/run_{{lang}}.log
 
+# Stats from the call log, per day, week or month: lines, work time, lines per hour, cost, recent sessions, and what is left.
+stats period="day" lang="kn":
+    uv run src/stats.py report {{period}} --lang {{lang}}
+
+# Save a Claude weekly-limit reading (the percent shown by /usage). Example: just usage 9 "2026-10-10 22:30"
+usage percent reset="":
+    uv run src/stats.py usage {{percent}} --reset "{{reset}}"
+
 # Stop the background run for a language.
 stop lang="kn":
     -pkill -f "[r]unner.sh {{lang}} "

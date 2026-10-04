@@ -334,6 +334,28 @@ double on 2027-01-01), and any other Gemini model logs $0 with a warning. Chines
 public holidays are off-peak for DeepSeek but are not detected, so those days
 are overstated.
 
+Each row also records how many sentences the call carried (`lines`), its
+outcome (`status`: ok / limit / error / timeout), its wall time (`seconds`),
+its value at API prices (`api_usd`; for Claude this is the CLI's
+`total_cost_usd`, since the subscription charges nothing per call) and the error
+text (`detail`; a Claude limit message names its reset time). A failed attempt
+gets a row too. A ledger written before these columns existed is upgraded in
+place the first time a call is logged.
+
+### Stats
+
+`just stats [day|week|month] [lang]` prints, per period and model, the calls,
+lines, work time, lines per hour, API value and what you paid, then the recent
+working sessions (for Claude, one session is one usage window) and a forecast of
+the Sutta and Vinaya lines left. Add `--no-forecast` by running
+`uv run src/stats.py report day --no-forecast`. The three ways of paying are
+counted differently: DeepSeek is real money per line, Claude is a flat plan
+limited by its 5 h window and weekly limit, and Gemini is the free tier.
+Only the Claude app shows the weekly percent, so type it in after a window:
+`just usage 9 "2026-10-10 22:30"` (percent used, and the reset time in local
+time). The Claude forecast needs that reading. Old rows without a line count or
+outcome are estimated from the source text and from their token count.
+
 ## Running
 
 All commands run from the repo root:

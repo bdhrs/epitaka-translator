@@ -1224,6 +1224,7 @@ def process_book(
                 model         = args.model,
                 models        = models,
                 system_prompt = system_prompt,
+                lines         = n_sentences,
             )
             if raw is None:
                 print(f"  Chunk {chunk_label} returned no response. Skipping.")

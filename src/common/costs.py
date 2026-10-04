@@ -33,7 +33,8 @@ _PRO_OVER_200K = (0.40, 4.00, 18.00)
 
 LEDGER = Path(cu.EPITAKA_DB).parent / "costs.csv"
 _FIELDS = ["time_utc", "model", "label", "cache_hit_tokens",
-           "cache_miss_tokens", "output_tokens", "usd"]
+           "cache_miss_tokens", "output_tokens", "usd",
+           "lines", "status", "seconds", "api_usd", "detail"]
 
 _run_total = 0.0
 _all_time: float | None = None
@@ -86,8 +87,33 @@ def _ledger_total() -> float:
         return 0.0
 
 
-def record(model: str, label: str, usage: dict, t: datetime | None = None) -> float:
-    """Append one ledger line for a finished call and print the running totals."""
+def _upgrade_ledger() -> None:
+    """Add the newer columns to a ledger written before they existed, leaving them blank."""
+    with open(LEDGER, newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    if not rows or rows[0] != _FIELDS[:len(rows[0])]:
+        return  # not an older copy of our own header: leave it alone
+    pad = [""] * (len(_FIELDS) - len(rows[0]))
+    tmp = LEDGER.with_suffix(".csv.tmp")
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(_FIELDS)
+        w.writerows(row + pad for row in rows[1:])
+    os.replace(tmp, LEDGER)
+
+
+def record(model: str, label: str, usage: dict, t: datetime | None = None, *,
+           lines: int = 0, status: str = "ok", seconds: float = 0.0,
+           detail: str = "") -> float:
+    """
+    Append one ledger line for a call attempt and print the running totals.
+
+    `lines` is how many sentences the call carried, `status` is ok / limit /
+    error / timeout, `seconds` is the wall time of the call, `detail` is the
+    error text (a Claude limit message names its reset time there). `usd` is
+    what the call cost at this model's own price; Claude's subscription has
+    none, so its API-rate value comes from usage["api_usd"] into `api_usd`.
+    """
     global _run_total, _all_time
     t = t or datetime.now(timezone.utc)
     hit = usage.get("prompt_cache_hit_tokens",
@@ -109,19 +135,33 @@ def record(model: str, label: str, usage: dict, t: datetime | None = None) -> fl
     _all_time += usd
 
     # A ledger write failure must not fail the (already paid-for) call.
+    # A model with a price already has its API-rate value in `usd`. Claude has
+    # none of its own, so a missing figure stays blank: unknown, not a real $0.
+    api_usd = usage.get("api_usd")
+    if api_usd is None and not model.startswith("claude:"):
+        api_usd = usd
+
     try:
         new_file = not LEDGER.exists()
         os.makedirs(LEDGER.parent, exist_ok=True)
+        if not new_file:
+            with open(LEDGER, encoding="utf-8") as f:
+                if f.readline().rstrip("\r\n").split(",") != _FIELDS:
+                    _upgrade_ledger()
         with open(LEDGER, "a", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             if new_file:
                 w.writerow(_FIELDS)
             w.writerow([t.strftime("%Y-%m-%d %H:%M:%S"), model, label,
                         hit, miss,
-                        usage.get("completion_tokens", 0), f"{usd:.6f}"])
+                        usage.get("completion_tokens", 0), f"{usd:.6f}",
+                        lines, status, f"{seconds:.1f}",
+                        "" if api_usd is None else f"{api_usd:.6f}",
+                        " ".join(str(detail).split())[:200]])
     except OSError as e:
         print(f"[cost] WARNING: could not write {LEDGER}: {e}")
 
-    print(f"[cost] {model} ${usd:.4f} this call, ${_run_total:.4f} this run, "
+    tag = "" if status == "ok" else f" [{status}]"
+    print(f"[cost] {model}{tag} ${usd:.4f} this call, ${_run_total:.4f} this run, "
           f"${_all_time:.4f} all time")
     return usd

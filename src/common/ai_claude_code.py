@@ -54,6 +54,8 @@ def chat(
         "prompt_cache_hit_tokens":  u.get("cache_read_input_tokens", 0),
         "prompt_cache_miss_tokens": u.get("input_tokens", 0) + u.get("cache_creation_input_tokens", 0),
         "completion_tokens":        u.get("output_tokens", 0),
+        # What this call is worth at API prices; the subscription charges nothing per call.
+        "api_usd":                  body.get("total_cost_usd"),
     }
     if body.get("is_error") or not body.get("result"):
         status = body.get("api_error_status")

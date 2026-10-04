@@ -174,6 +174,12 @@ class CompatError(RuntimeError):
         self.status_code = status_code
 
 
+def _is_rate_limit(exc: Exception) -> bool:
+    status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    text = str(exc).upper()
+    return status == 429 or "429" in text or "RESOURCE_EXHAUSTED" in text or "RATE_LIMIT" in text
+
+
 def split_model(model: str) -> tuple[str, str]:
     """
     "deepseek:deepseek-v4-flash" -> ("deepseek", "deepseek-v4-flash").
@@ -629,6 +635,7 @@ def _generate_with_retry(
     estimated_tokens:  int,
     timeout:           int,
     label:             str = "",
+    lines:             int = 0,
 ) -> tuple[object | None, str | None, str | None]:
     """
     One Gemini generateContent request with the standard retry/backoff loop:
@@ -679,8 +686,15 @@ def _generate_with_retry(
 
         result: dict = {"response": None, "error": None}
         provider, model_name = split_model(model)
+        # Set when this attempt times out: the retry carries the same lines, so a
+        # late reply from this one must not count them a second time.
+        abandoned = threading.Event()
 
-        def _call():
+        # abandoned and model are bound as defaults: a worker that outlives its timeout
+        # finishes after the loop has moved on, and would otherwise read the next attempt's.
+        def _call(abandoned=abandoned, model=model):
+            started = time.monotonic()
+            recorded = False
             try:
                 if provider == "gemini":
                     client = genai.Client(api_key=key)
@@ -695,7 +709,8 @@ def _generate_with_retry(
                         # Google bills thinking tokens as output, but reports them separately.
                         "completion_tokens":        (getattr(md, "candidates_token_count", None) or 0)
                                                     + (getattr(md, "thoughts_token_count", None) or 0),
-                    })
+                    }, lines=0 if abandoned.is_set() else lines, seconds=time.monotonic() - started)
+                    recorded = True
                 else:
                     # Single-turn only: the tool-calling loop stays Gemini-only.
                     if provider == "claude":
@@ -713,13 +728,24 @@ def _generate_with_retry(
                             config.max_output_tokens, timeout,
                         )
                     if usage:  # billed even when the reply had no usable text
-                        costs.record(model, label, usage)
+                        costs.record(model, label, usage,
+                                     lines=0 if abandoned.is_set() else lines,
+                                     status=("ok" if text is not None
+                                             else "limit" if status == 429 else "error"),
+                                     seconds=time.monotonic() - started,
+                                     detail="" if text is not None else err)
+                        recorded = True
                     if text is None:
                         raise CompatError(status, err)
                     r = types.SimpleNamespace(text=text)
                 result["response"] = r
             except Exception as e:
                 result["error"] = e
+                # A failed attempt still gets a ledger row, unless the timeout already logged it.
+                if not recorded and not abandoned.is_set():
+                    costs.record(model, label, {}, lines=lines,
+                                 status="limit" if _is_rate_limit(e) else "error",
+                                 seconds=time.monotonic() - started, detail=str(e))
 
         t = threading.Thread(target=_call, daemon=True)
         t.start()
@@ -727,6 +753,9 @@ def _generate_with_retry(
 
         if t.is_alive():
             log.error(f"[AI] Timeout on attempt {attempt + 1} ({model})")
+            abandoned.set()
+            costs.record(model, label, {}, lines=lines, status="timeout",
+                         seconds=timeout, detail=f"no reply in {timeout}s")
             rotator.record_result(key, success=False, error="timeout", model=model)
             continue
 
@@ -736,8 +765,7 @@ def _generate_with_retry(
             status = getattr(e, "status_code", None) or getattr(e, "code", None)
             err_msg = f"HTTP {status}: {e}"
             rotator.record_result(key, success=False, error=err_msg, model=model)
-            is_429 = status == 429 or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper() or "RATE_LIMIT" in err_str.upper()
-            if is_429:
+            if _is_rate_limit(e):
                 log.warning(f"[AI] Rate limited (429) on {model}, attempt {attempt + 1}.")
 
                 # Record the 429 against the specific key + model.
@@ -791,6 +819,7 @@ def call_gemini(
     timeout:            int = 300,
     used_model:         list | None = None,
     label:              str = "",
+    lines:              int = 0,
 ) -> str | None:
     """
     Send one prompt to Gemini and return the raw response text, or None if
@@ -832,7 +861,7 @@ def call_gemini(
         role="user", parts=[genai_types.Part.from_text(text=prompt)],
     )]
     response, _, model_used = _generate_with_retry(
-        rotator, pool, contents, config, estimated_tokens, timeout, label,
+        rotator, pool, contents, config, estimated_tokens, timeout, label, lines,
     )
     if response is None:
         return None
@@ -855,6 +884,7 @@ def call_gemini_with_tools(
     log:               callable = lambda msg: None,
     used_model:        list | None = None,
     label:             str = "",
+    lines:             int = 0,
 ) -> str | None:
     """
     Function-calling loop on top of _generate_with_retry.
@@ -901,7 +931,7 @@ def call_gemini_with_tools(
     tool_rounds = 0
     while True:
         response, _, model_used = _generate_with_retry(
-            rotator, pool, contents, config, estimated, timeout, label,
+            rotator, pool, contents, config, estimated, timeout, label, lines,
         )
         if response is None:
             return None
@@ -926,7 +956,7 @@ def call_gemini_with_tools(
                     ))],
                 ))
                 response, _, model_used = _generate_with_retry(
-                    rotator, pool, contents, forced_config, estimated, timeout, label,
+                    rotator, pool, contents, forced_config, estimated, timeout, label, lines,
                 )
                 if response is None:
                     return None
@@ -1076,6 +1106,7 @@ def call_ai_with_logging(
     max_tool_rounds:   int = 12,
     models:            list[str] | None = None,
     used_model:        list | None = None,
+    lines:             int = 0,
 ) -> str | None:
     """
     Thin wrapper around call_gemini() / call_gemini_with_tools() that also
@@ -1124,12 +1155,13 @@ def call_ai_with_logging(
             tools=tools, tool_executor=tool_executor,
             max_output_tokens=max_output_tokens, max_rounds=max_tool_rounds,
             log=lambda msg: print(f"[AI] {msg}"), used_model=used_model,
-            label=f"{book_id} {chunk_id}",
+            label=f"{book_id} {chunk_id}", lines=lines,
         )
     else:
         raw = call_gemini(rotator, prompt, system_prompt, model=model,
                           models=models, max_output_tokens=max_output_tokens,
-                          used_model=used_model, label=f"{book_id} {chunk_id}")
+                          used_model=used_model, label=f"{book_id} {chunk_id}",
+                          lines=lines)
     if raw is None:
         return None
 
