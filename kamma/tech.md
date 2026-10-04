@@ -14,6 +14,15 @@
 - Linux desktop; long runs go through `runner.sh`, usually via `just run-deepseek <lang>` (`just run` is the Claude background run)
   (DeepSeek pinned); `just next <lang>` (plus the `next-deepseek-kn` and `next-gemini-kn` shortcuts) does only the next unfinished book;
   `just export <lang>` writes everything translated so far.
+- Long runs happen on a server: SSH alias `epitaka` (`root@187.126.118.33`,
+  key login since 2026-10-05), repo at `/root/epitaka-translator`, code kept
+  in step by `git pull`. `just pull` mirrors its `data/` here. It snapshots
+  the live `epitaka_<lang>.db`/`glossary_<lang>.db` with `sqlite3 .backup`
+  first, because a WAL database copied mid-write can be broken. On the server
+  `uv` is not on the PATH of a non-interactive SSH command.
+- 2026-10-05: before the first pull, the local DeepSeek Kannada run
+  (2026-09-29 to 10-01; D-i to D-iii plus part of M-i) was kept as
+  `data/*-deepseek.*` copies. The server's Claude run started over from D-i.
 
 ## Who This Is For
 Me, running translations into new languages. User, 2026-09-28: "all my work

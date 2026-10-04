@@ -33,6 +33,27 @@ compare-models lang="kn" book="D-i" start="971" end="978" models="gemini-3.7-fla
 export lang:
     uv run src/export_text.py --lang {{lang}} --out data/export_{{lang}}.txt
 
+# Copy the server's data folder here (overwrites local copies); safe while the server run is going.
+pull host="epitaka" dir="/root/epitaka-translator":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # A live database copied mid-write can be broken, so the server first makes
+    # clean copies of the ones the run writes (each target language has a glossary).
+    # .mirror is emptied first so a copy left by an earlier pull can never come down.
+    live=$(ssh {{host}} 'cd "{{dir}}/data" && rm -rf .mirror && mkdir .mirror && for g in glossary_*.db; do
+        l=${g#glossary_}; l=${l%.db}
+        for f in "epitaka_$l.db" "$g"; do
+            if [ -f "$f" ]; then sqlite3 "$f" ".backup .mirror/$f" || exit 1; echo "$f"; fi
+        done
+    done')
+    # costs.csv is rewritten through a .tmp file that can vanish mid-transfer.
+    ex=(--exclude '*.db-wal' --exclude '*.db-shm' --exclude '*.tmp' --exclude '.mirror/')
+    for n in $live; do ex+=(--exclude "/$n"); done
+    rsync -a --info=name1 "${ex[@]}" "{{host}}:{{dir}}/data/" data/
+    # A stale local side log would be replayed onto the new copy.
+    for n in $live; do rm -f "data/$n-wal" "data/$n-shm"; done
+    rsync -a --info=name1 "{{host}}:{{dir}}/data/.mirror/" data/
+
 # Translate the whole canon with Claude Sonnet via the local Claude Code CLI (subscription), in the background; resumes where it left off.
 run-claude lang="kn":
     nohup ./runner.sh {{lang}} claude:sonnet >> data/run_{{lang}}.log 2>&1 &

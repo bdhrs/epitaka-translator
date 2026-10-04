@@ -31,6 +31,7 @@ just next-deepseek-kn # same as `just next kn`, kept as a Kannada shortcut
 just next-gemini-kn   # same, with Gemini rotating through the Gemini keys
 just export kn        # write everything translated so far to data/export_kn.txt
 just compare-models   # run one section on three Gemini models, results in data/compare/
+just pull             # copy the server's data/ folder here (overwrites local copies)
 ```
 
 - `just run [lang]` is `just run-claude`: it starts `./runner.sh <lang> claude:sonnet`
@@ -50,6 +51,16 @@ just compare-models   # run one section on three Gemini models, results in data/
   paragraph so far, in canon order: a heading per book, then for each
   paragraph the Pāli in the target language's script, the translation, and a
   blank line. For Indian languages nothing in it is in Roman letters.
+- `just pull [host] [dir]` mirrors a server's `data/` folder into the local
+  one (defaults: SSH host `epitaka`, repo `/root/epitaka-translator`), so
+  stats and export can run locally on the server's work. The server first
+  makes clean copies of the databases the run is writing (`sqlite3 .backup`
+  into `data/.mirror/`), then `rsync` pulls everything, sending only changed
+  parts. Safe while the server run is going. It never removes local files
+  that are missing on the server. Do not pull while a local run, `just stats`
+  or a sqlite shell has those databases open: the open program keeps writing
+  to the old copy. Needs key-based SSH login and `rsync` and `sqlite3` on the
+  server.
 
 ## How it works
 
