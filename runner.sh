@@ -151,6 +151,16 @@ fi
 # 3 hours in seconds
 SLEEP_DURATION=10800
 
+# The Claude usage limit is a 5 h window that opens at the first accepted
+# request, so the wait is counted from the start of the productive run, not
+# from the moment the limit hit.
+WINDOW_SECONDS=18000
+# A run shorter than this did no work, so it cannot have opened a new window.
+MIN_WORK_SECONDS=120
+# Shortest wait after a limit hit, so a still-limited retry does not spin.
+RETRY_SECONDS=600
+WINDOW_START=0
+
 echo "Starting continuous translation loop for lang='$LANG_CODE', model='${MODEL_NAME:-(fallback chain)}'..."
 echo "Data dir: $DATA_DIR"
 
@@ -162,6 +172,7 @@ while true; do
     # Run command and capture output while streaming it to the terminal
     # Using tee to print output live AND capture it in a temporary log file
     TEMP_LOG=$(mktemp)
+    RUN_START=$(date +%s)
     # -u: unbuffered, or tee holds the progress lines back in big batches.
     python -u src/book_translator.py --lang "$LANG_CODE" --books "$BOOKS" "${MODEL_ARGS[@]}" 2>&1 | tee "$TEMP_LOG"
 
@@ -177,9 +188,21 @@ while true; do
         rm -f /tmp/gem*
         rm -rf /tmp/book_translator_logs/*
 
-        echo "[SLEEP] Waiting 3 hours before retrying (will resume at $(date -d '+3 hours' '+%H:%M:%S' 2>/dev/null || date -v+3H '+%H:%M:%S'))..."
+        SLEEP_FOR=$SLEEP_DURATION
+        if [[ "$MODEL_NAME" == claude:* ]]; then
+            RUN_END=$(date +%s)
+            if [ $((RUN_END - RUN_START)) -ge $MIN_WORK_SECONDS ]; then
+                WINDOW_START=$RUN_START
+            fi
+            SLEEP_FOR=$((WINDOW_START + WINDOW_SECONDS - RUN_END))
+            if [ "$SLEEP_FOR" -lt "$RETRY_SECONDS" ]; then
+                SLEEP_FOR=$RETRY_SECONDS
+            fi
+        fi
+
+        echo "[SLEEP] Waiting $((SLEEP_FOR / 60)) min before retrying (will resume at $(date -d "+${SLEEP_FOR} seconds" '+%H:%M:%S' 2>/dev/null || date -v+${SLEEP_FOR}S '+%H:%M:%S'))..."
         rm -f "$TEMP_LOG"
-        sleep "$SLEEP_DURATION"
+        sleep "$SLEEP_FOR"
     else
         rm -f "$TEMP_LOG"
         if [ $EXIT_CODE -eq 0 ]; then
