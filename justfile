@@ -1,8 +1,11 @@
 _default:
     @just --list
 
-# Translate the whole canon from the beginning with DeepSeek; resumes where it left off.
-run lang:
+# Translate the whole canon with Claude in the background (same as run-claude); resumes where it left off.
+run lang="kn": (run-claude lang)
+
+# Translate the whole canon from the beginning with DeepSeek, in the foreground; resumes where it left off.
+run-deepseek lang="kn":
     ./runner.sh {{lang}} deepseek:deepseek-v4-flash
 
 # Translate only the next unfinished book with DeepSeek, then stop.

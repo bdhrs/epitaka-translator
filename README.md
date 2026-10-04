@@ -23,7 +23,9 @@ The runner downloads any missing database files, syncs `.venv` with
 The `justfile` holds the everyday commands (needs [just](https://just.systems)):
 
 ```bash
-just run kn           # translate the whole canon into Kannada with DeepSeek, from the beginning
+just run              # translate the whole canon into Kannada with Claude, in the background
+just run-deepseek kn  # same, with DeepSeek, in the foreground
+just stats            # daily stats from the call log (just stats week, just stats month)
 just next kn          # translate only the next unfinished book, then stop
 just next-deepseek-kn # same as `just next kn`, kept as a Kannada shortcut
 just next-gemini-kn   # same, with Gemini rotating through the Gemini keys
@@ -31,11 +33,16 @@ just export kn        # write everything translated so far to data/export_kn.txt
 just compare-models   # run one section on three Gemini models, results in data/compare/
 ```
 
-- `just run <lang>` runs `./runner.sh <lang> deepseek:deepseek-v4-flash`: it
-  works through the preset book order (Dīgha Nikāya first), skips lines already
-  translated, prints progress and `[cost]` lines as it goes, and keeps looping
-  until everything is done (sleeping 3 h whenever the keys run out). Stop it
-  with Ctrl+C and run it again later — it resumes where it stopped.
+- `just run [lang]` is `just run-claude`: it starts `./runner.sh <lang> claude:sonnet`
+  in the background (the language defaults to `kn`) and appends to
+  `data/run_<lang>.log`. Watch it with `just tail`, stop it with `just stop`.
+  When the Claude limit hits, it waits until 5 h after the run started.
+- `just run-deepseek <lang>` runs `./runner.sh <lang> deepseek:deepseek-v4-flash`
+  in the foreground: it works through the preset book order (Dīgha Nikāya
+  first), skips lines already translated, prints progress and `[cost]` lines as
+  it goes, and keeps looping until everything is done (sleeping 3 h whenever
+  the keys run out). Stop it with Ctrl+C and run it again later — it resumes
+  where it stopped.
 - `just next <lang>` does the same for one book only: the first book in the
   preset order that still has untranslated lines. It stops when that book is
   done, so run it again for the book after.
