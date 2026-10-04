@@ -27,7 +27,7 @@ export lang:
 
 # Translate the whole canon with Claude Sonnet via the local Claude Code CLI (subscription), in the background; resumes where it left off.
 run-claude lang="kn":
-    nohup ./runner.sh {{lang}} claude:sonnet > data/run_{{lang}}.log 2>&1 &
+    nohup ./runner.sh {{lang}} claude:sonnet >> data/run_{{lang}}.log 2>&1 &
     @echo "Started in the background. Watch: just tail {{lang}}   Stop: just stop {{lang}}"
 
 # Follow the background run's log (Ctrl+C stops watching, not the run).
