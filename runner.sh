@@ -143,10 +143,16 @@ source "$SCRIPT_DIR/.venv/bin/activate"
 # ---------------------------------------------------------------------------
 # When no model is given we omit --model entirely so book_translator.py uses
 # its FALLBACK_MODEL_CHAIN (Gemini models, then DeepSeek, then OpenRouter).
-MODEL_ARGS=()
-if [ -n "$MODEL_NAME" ]; then
-    MODEL_ARGS=(--model "$MODEL_NAME")
+#
+# A "+" makes a relay: "claude:sonnet+deepseek:deepseek-v4-flash". The first
+# model runs until its limit. The second then runs until the first one resets.
+PRIMARY_MODEL="${MODEL_NAME%%+*}"
+RELAY_MODEL=""
+if [[ "$MODEL_NAME" == *+* ]]; then
+    RELAY_MODEL="${MODEL_NAME#*+}"
 fi
+# Unix time when the first model is usable again. 0 = not waiting on it.
+RELAY_UNTIL=0
 
 # 3 hours in seconds
 SLEEP_DURATION=10800
@@ -173,12 +179,26 @@ while true; do
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting translation run..."
     echo "=================================================="
 
+    # Pick the model for this run. The second model of a relay is used only
+    # while the first one is waiting for its reset.
+    RUN_MODEL="$PRIMARY_MODEL"
+    STOP_ARGS=()
+    if [ -n "$RELAY_MODEL" ] && [ "$RELAY_UNTIL" -gt "$(date +%s)" ]; then
+        RUN_MODEL="$RELAY_MODEL"
+        STOP_ARGS=(--stop-at "$RELAY_UNTIL")
+        echo "[RELAY] $PRIMARY_MODEL is limited. Running $RELAY_MODEL until $(date -d "@$RELAY_UNTIL" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -r "$RELAY_UNTIL" '+%Y-%m-%d %H:%M:%S')."
+    fi
+    MODEL_ARGS=()
+    if [ -n "$RUN_MODEL" ]; then
+        MODEL_ARGS=(--model "$RUN_MODEL")
+    fi
+
     # Run command and capture output while streaming it to the terminal
     # Using tee to print output live AND capture it in a temporary log file
     TEMP_LOG=$(mktemp)
     RUN_START=$(date +%s)
     # -u: unbuffered, or tee holds the progress lines back in big batches.
-    python -u src/book_translator.py --lang "$LANG_CODE" --books "$BOOKS" "${MODEL_ARGS[@]}" 2>&1 | tee "$TEMP_LOG"
+    python -u src/book_translator.py --lang "$LANG_CODE" --books "$BOOKS" "${MODEL_ARGS[@]}" "${STOP_ARGS[@]}" 2>&1 | tee "$TEMP_LOG"
 
     EXIT_CODE=${PIPESTATUS[0]}
 
@@ -193,8 +213,8 @@ while true; do
         rm -rf /tmp/book_translator_logs/*
 
         SLEEP_FOR=$SLEEP_DURATION
-        if [[ "$MODEL_NAME" == claude:* ]]; then
-            RUN_END=$(date +%s)
+        RUN_END=$(date +%s)
+        if [[ "$RUN_MODEL" == claude:* ]]; then
             if [ $((RUN_END - RUN_START)) -ge $MIN_WORK_SECONDS ]; then
                 WINDOW_START=$RUN_START
             fi
@@ -210,11 +230,27 @@ while true; do
                     SLEEP_FOR=$UNTIL_RESET
                 fi
             fi
+            if [ -n "$RELAY_MODEL" ]; then
+                # Do not sleep: the second model works until the first resets.
+                RELAY_UNTIL=$((RUN_END + SLEEP_FOR))
+                rm -f "$TEMP_LOG"
+                continue
+            fi
+        elif [ -n "$RELAY_MODEL" ] && [ "$RUN_MODEL" == "$RELAY_MODEL" ]; then
+            # The second model is out too (for example no balance). Wait for the first.
+            SLEEP_FOR=$((RELAY_UNTIL - RUN_END))
+            if [ "$SLEEP_FOR" -lt 1 ]; then
+                rm -f "$TEMP_LOG"
+                continue
+            fi
         fi
 
         echo "[SLEEP] Waiting $((SLEEP_FOR / 60)) min before retrying (will resume at $(date -d "+${SLEEP_FOR} seconds" '+%H:%M:%S' 2>/dev/null || date -v+${SLEEP_FOR}S '+%H:%M:%S'))..."
         rm -f "$TEMP_LOG"
         sleep "$SLEEP_FOR"
+    elif grep -q '\[STOP-AT\]' "$TEMP_LOG"; then
+        rm -f "$TEMP_LOG"
+        echo "[RELAY] Reset time reached. Back to $PRIMARY_MODEL."
     else
         rm -f "$TEMP_LOG"
         if [ $EXIT_CODE -eq 0 ]; then

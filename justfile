@@ -1,8 +1,13 @@
 _default:
     @just --list
 
-# Translate the whole canon with Claude in the background (same as run-claude); resumes where it left off.
-run lang="kn": (run-claude lang)
+# Translate the whole canon in the background: Claude until its limit, DeepSeek until Claude resets, then Claude again (same as relay).
+run lang="kn": (relay lang)
+
+# Same as run, written out: Claude, then DeepSeek while Claude waits for its reset. Resumes where it left off.
+relay lang="kn":
+    nohup ./runner.sh {{lang}} claude:sonnet+deepseek:deepseek-v4-flash >> data/run_{{lang}}.log 2>&1 &
+    @echo "Started in the background. Watch: just tail {{lang}}   Stop: just stop {{lang}}"
 
 # Translate the whole canon from the beginning with DeepSeek, in the foreground; resumes where it left off.
 run-deepseek lang="kn":

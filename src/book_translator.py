@@ -84,6 +84,7 @@ import json
 import os
 import re
 import sys
+import time
 import types
 import sqlite3
 from pathlib import Path
@@ -1016,6 +1017,12 @@ def build_prompt(
 # Per-book processing
 # ══════════════════════════════════════════════════════════════════
 
+def stop_due(args) -> bool:
+    """True once the --stop-at time has passed. Checked only between chunks, so a chunk is never cut half-saved."""
+    stop_at = getattr(args, "stop_at", 0)
+    return stop_at > 0 and time.time() >= stop_at
+
+
 def process_book(
     book_id:        str,
     args,
@@ -1066,6 +1073,8 @@ def process_book(
     for part_idx, part in enumerate(sections, 1):
         if args.max_parts != -1 and part_idx > args.max_parts:
             print(f"Reached --max-parts={args.max_parts}; stopping.")
+            break
+        if stop_due(args):
             break
 
         pid_start = part[0]["para_id"]
@@ -1291,6 +1300,8 @@ def process_book(
             return saved_trans, saved_gloss, saved_rem
 
         for c_idx, chunk in enumerate(chunks, 1):
+            if stop_due(args):
+                break
             u, g, r = _handle_chunk(chunk)
             total_updated  += u
             total_glossary += g
@@ -1476,6 +1487,9 @@ def main() -> int:
     parser.add_argument("--log-dir",        default=DEFAULT_LOG_DIR)
     parser.add_argument("--max-parts",      type=int, default=-1,  help="stop after N parts per book (for testing)")
     parser.add_argument("--dry-run",        action="store_true")
+    parser.add_argument("--stop-at",        type=int, default=0,
+                        help="Unix time. After the chunk in progress is saved, stop and exit 0 "
+                             "(runner.sh uses this to hand the run back to the first model).")
     args = parser.parse_args()
 
     # Ordered model pool for this run: pinned single model, or the fallback
@@ -1555,6 +1569,8 @@ def main() -> int:
     grand_remarks   = 0
 
     for book_idx, book_id in enumerate(book_list, 1):
+        if stop_due(args):
+            break
         print(f"\n{'#' * 60}")
         print(f"# BOOK {book_idx}/{len(book_list)}: {book_id}")
         print(f"{'#' * 60}")
@@ -1582,6 +1598,10 @@ def main() -> int:
         grand_remarks   += r
 
         print(f"Book {book_id} done — sentences: {s}, glossary: {g}, remarks: {r}.")
+
+    if stop_due(args):
+        print(f"[STOP-AT] Stop time reached. Sentences saved this run: {grand_sentences}.")  # runner.sh looks for this tag
+        return 0
 
     print("\n" + "=" * 60)
     print(f"ALL DONE.  Books processed: {len(book_list)}")
