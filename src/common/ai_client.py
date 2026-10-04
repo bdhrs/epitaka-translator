@@ -274,12 +274,12 @@ class KeyRotator:
         if n >= 3:
             self._dead_for_model.setdefault(model, set()).add(kid)
             log.warning(
-                f"[Gemini] {label} hit 3x 429 on {model} — parking it for "
+                f"[AI] {label} hit 3x 429 on {model} — parking it for "
                 f"this model (still usable on other models / other keys "
                 f"keep rotating normally)."
             )
             return True
-        log.info(f"[Gemini] {label} 429 strike {n}/3 on {model}.")
+        log.info(f"[AI] {label} 429 strike {n}/3 on {model}.")
         return False
 
     def next(self) -> str:
@@ -337,7 +337,7 @@ class KeyRotator:
 
             wait_seconds = max(wait_seconds, 1.0)
             log.info(
-                f"[Gemini] All {len(keys_snapshot)} key(s) at rpm/tpm budget — "
+                f"[AI] All {len(keys_snapshot)} key(s) at rpm/tpm budget — "
                 f"waiting {wait_seconds:.0f}s."
             )
             time.sleep(wait_seconds)
@@ -483,7 +483,7 @@ class KeyRotator:
             n_dropped = len(self._keys) - len(still_alive)
             if n_dropped:
                 log.warning(
-                    f"[Gemini] Dropping {n_dropped} key(s) marked dead by "
+                    f"[AI] Dropping {n_dropped} key(s) marked dead by "
                     f"another process. {len(still_alive)} remaining."
                 )
             self._keys = still_alive
@@ -612,7 +612,7 @@ class ModelPool:
 
 def _fatal_all_keys_exhausted() -> None:
     """Alert and exit when every configured key has been permanently removed."""
-    log.error("[Gemini] All API keys exhausted (rate-limited/invalid). Exiting.")
+    log.error("[AI] All API keys exhausted (rate-limited/invalid). Exiting.")
     send_telegram(
         "<b>AI run FATAL</b>\n"
         "All Gemini API keys are exhausted (rate-limited or invalid).\n"
@@ -658,7 +658,7 @@ def _generate_with_retry(
             # every chunk from here on silently "failed" one at a time
             # while the script kept running to the end doing nothing —
             # it needs to stop loudly here instead.
-            log.error("[Gemini] No models left in the pool (all keys 429-parked "
+            log.error("[AI] No models left in the pool (all keys 429-parked "
                       "on every model). Treating as fatal.")
             _fatal_all_keys_exhausted()
         attempt += 1
@@ -666,7 +666,7 @@ def _generate_with_retry(
         try:
             key = rotator.acquire(estimated_tokens, model=model)
         except AllKeysExhaustedError as exc:
-            log.warning(f"[Gemini] {exc}")
+            log.warning(f"[AI] {exc}")
             if rotator.remaining_key_count() == 0:
                 # Truly nothing left — every key was permanently removed
                 # (invalid/expired/blocked). Nothing a model switch can fix.
@@ -726,7 +726,7 @@ def _generate_with_retry(
         t.join(timeout=timeout)
 
         if t.is_alive():
-            log.error(f"[Gemini] Timeout on attempt {attempt + 1} ({model})")
+            log.error(f"[AI] Timeout on attempt {attempt + 1} ({model})")
             rotator.record_result(key, success=False, error="timeout", model=model)
             continue
 
@@ -738,7 +738,7 @@ def _generate_with_retry(
             rotator.record_result(key, success=False, error=err_msg, model=model)
             is_429 = status == 429 or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper() or "RATE_LIMIT" in err_str.upper()
             if is_429:
-                log.warning(f"[Gemini] Rate limited (429) on {model}, attempt {attempt + 1}.")
+                log.warning(f"[AI] Rate limited (429) on {model}, attempt {attempt + 1}.")
 
                 # Record the 429 against the specific key + model.
                 # KeyRotator owns 429 strike tracking.
@@ -756,7 +756,7 @@ def _generate_with_retry(
                 rotator.remove(key, reason=err_msg, model=model)
                 time.sleep(5)
                 continue
-            log.warning(f"[Gemini] Error attempt {attempt + 1} ({model}): {e}")
+            log.warning(f"[AI] Error attempt {attempt + 1} ({model}): {e}")
             time.sleep(20)
             continue
 
@@ -764,7 +764,7 @@ def _generate_with_retry(
             rotator.record_result(key, success=True, model=model)
             return result["response"], key, model
 
-    log.error("[Gemini] All retry attempts exhausted.")
+    log.error("[AI] All retry attempts exhausted.")
     return None, None, None
 
 
@@ -820,7 +820,7 @@ def call_gemini(
 
     pool = ModelPool(models if models else ([model] if model else []))
     if pool.current() is None:
-        log.error("[Gemini] call_gemini called with no usable models.")
+        log.error("[AI] call_gemini called with no usable models.")
         return None
 
     estimated_tokens = estimate_tokens(prompt) + estimate_tokens(system_prompt)
@@ -885,7 +885,7 @@ def call_gemini_with_tools(
 
     pool = ModelPool(models if models else ([model] if model else []))
     if pool.current() is None:
-        log.error("[Gemini] call_gemini_with_tools called with no usable models.")
+        log.error("[AI] call_gemini_with_tools called with no usable models.")
         return None
 
     contents = [genai_types.Content(
