@@ -34,7 +34,7 @@ Findings 1 and 3 came from both the agent review and CodeRabbit.
 - `-deepseek` copies: 15,048 lines, 5,657 terms (re-checked by the reviewer).
 
 ## Not Verified
-- A pull while the server run is actively writing: the run slept for every pull. Re-check once after 05:32 on 2026-10-05.
+- ~~A pull while the server run is actively writing.~~ Done 2026-10-05 05:36-05:39: four pulls 45 s apart during the live run, two of them within a minute after a write (DB mtime 05:38:04, 05:38:39). Every pull exit 0; local counts = server snapshot = server live DB each time (14,230 → 14,373 → 14,411 lines; 759 → 764 terms); `integrity_check` ok on both DBs every time. Note: the run closes its DB after each write, so no `-wal` file lingers on the server between writes.
 - `.backup` restarting under frequent writes: only reasoned (the DBs are a few MB, so a step takes milliseconds).
 - More than one target language on the server: only `kn` exists.
 
