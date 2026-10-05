@@ -13,7 +13,8 @@
   fallback model chain; non-Gemini models are written `provider:model`.
 - Linux desktop; long runs go through `runner.sh`, usually via `just run-deepseek <lang>` (`just run` is the Claude background run)
   (DeepSeek pinned); `just next <lang>` (plus the `next-deepseek-kn` and `next-gemini-kn` shortcuts) does only the next unfinished book;
-  `just export <lang>` writes everything translated so far.
+  `just export <lang>` writes one text file per finished sutta to `exports/<lang>/`;
+  `just upload <lang>` sends new ones to Google Drive as Google Docs.
 - Long runs happen on a server: SSH alias `epitaka` (`root@187.126.118.33`,
   key login since 2026-10-05), repo at `/root/epitaka-translator`, code kept
   in step by `git pull`. `just pull` mirrors its `data/` here. It snapshots
@@ -56,5 +57,26 @@ users mostly translate other languages, so Hindi-only costs (the
 - Optional prompt/response logs via `--log-dir`.
 - `data/costs.csv`: one line per AI call with tokens and USD, plus a printed
   running total (this call / this run / all time).
-- A plain text file per sutta from `src/export_text.py`: Pāli in the target
-  script, then the translation, paragraph by paragraph.
+- A plain text file per finished sutta from `src/export_text.py`, in
+  `exports/<lang>/<lang>_<sc_id>.txt` (not in `data/`, which `just pull`
+  rsyncs from the server): Pāli in the target script, then the translation,
+  paragraph by paragraph. Part-done suttas are skipped.
+- Proofreading (2026-10-05): `just upload` puts each file in Google Drive as a
+  Google Doc, in `ePitaka Proofreading/<lang>` on the Digital Pāḷi Dictionary
+  account (rclone remote `dpd_drive`). A doc is never overwritten once
+  uploaded. Proofreaders fix wording in Suggesting mode and comment only on
+  questions and term-wide choices; a later read-back step relies on this, and
+  matches paragraphs by their Pāli line. Their rules are the doc
+  `!!! README FIRST` inside each language folder (`ePitaka Proofreading/kn/`,
+  the folder proofreaders get access to), so the read-back step must skip it;
+  Kannada folder link (shared "Anyone with the link", Commenter):
+  https://drive.google.com/drive/folders/1WFToBSZ9yISxcKTZl_xXYc-QmfiVQlpj
+  its source is
+  `kamma/archive/20261005_sutta_export_drive/artifacts/!!! README FIRST.txt`
+  (re-upload by hand after editing it).
+- The user reads Pāli and English, not Kannada (2026-10-05: "i dont read
+  kannada, just know pali and english"). Proofreaders may comment in Kannada
+  or English (2026-10-06: Claude reads the comments, so English is not
+  required). The read-back step must show each suggestion and comment with
+  the original quoted, an English translation, any doubt about the
+  translation marked, and a recommendation for the user to approve.

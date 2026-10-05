@@ -43,9 +43,15 @@ next-gemini-kn:
 compare-models lang="kn" book="D-i" start="971" end="978" models="gemini-3.7-flash,gemini-3.1-pro-preview,gemini-3.8-flash":
     uv run src/compare_models.py --lang {{lang}} --book {{book}} --start {{start}} --end {{end}} --models {{models}}
 
-# Write everything translated so far into one text file.
+# Write each finished sutta to its own text file in exports/<lang>/.
 export lang:
-    uv run src/export_text.py --lang {{lang}} --out data/export_{{lang}}.txt
+    uv run src/export_text.py --lang {{lang}} --out-dir exports/{{lang}}
+
+# Upload new sutta files to Google Drive as Google Docs. Never overwrites a doc.
+upload lang="kn" folder="ePitaka Proofreading" remote="dpd_drive":
+    rclone copy exports/{{lang}} "{{remote}}:{{folder}}/{{lang}}" \
+        --include "*.txt" --drive-import-formats txt \
+        --drive-export-formats txt --ignore-existing -v
 
 # Copy the server's data folder to this machine. Safe during a run.
 pull host="epitaka" dir="/root/epitaka-translator":

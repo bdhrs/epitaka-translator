@@ -13,6 +13,8 @@ __pycache__/
 # Local data dir (default is a symlink to ../data; or real DBs downloaded
 # by runner.sh) — never commit large SQLite files
 /data
+# Per-sutta text exports (just export) — regenerated, never committed
+/exports
 *.db
 *.db-wal
 *.db-shm

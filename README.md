@@ -29,7 +29,8 @@ just stats            # daily stats from the call log (just stats week, just sta
 just next kn          # translate only the next unfinished book, then stop
 just next-deepseek-kn # same as `just next kn`, kept as a Kannada shortcut
 just next-gemini-kn   # same, with Gemini rotating through the Gemini keys
-just export kn        # write everything translated so far to data/export_kn.txt
+just export kn        # one text file per finished sutta in exports/kn/
+just upload kn        # upload new sutta files to Google Drive as Google Docs
 just compare-models   # run one section on three Gemini models, results in data/compare/
 just pull             # copy the server's data/ folder here (overwrites local copies)
 ```
@@ -47,10 +48,26 @@ just pull             # copy the server's data/ folder here (overwrites local co
 - `just next <lang>` does the same for one book only: the first book in the
   preset order that still has untranslated lines. It stops when that book is
   done, so run it again for the book after.
-- `just export <lang>` writes one plain text file with every translated
-  paragraph so far, in canon order: a heading per book, then for each
-  paragraph the Pāli in the target language's script, the translation, and a
-  blank line. For Indian languages nothing in it is in Roman letters.
+- `just export <lang>` writes one plain text file per finished sutta into
+  `exports/<lang>/`, named after its SuttaCentral id (`kn_dn1.txt`,
+  `kn_mn10.txt`). Each paragraph is the Pāli in the target language's script,
+  the translation, and a blank line; the sutta's title is its first
+  paragraph. A sutta with any untranslated line (bare punctuation lines
+  aside) is skipped and named in the output. Old `.txt` files in the folder are removed first. For Indian
+  languages nothing in the files is in Roman letters.
+- `just upload <lang>` copies those files to Google Drive with rclone, as
+  Google Docs, into `ePitaka Proofreading/<lang>` on the `dpd_drive` remote
+  (settings: `folder`, `remote`). It skips every file that already has a doc
+  of the same name, so proofreading in a doc is never overwritten, and a
+  second run uploads only what the first one missed. One-time setup: make
+  your own Google client ID (rclone.org/drive/#making-your-own-client-id) —
+  rclone's built-in one is shared by every rclone user, and Google refuses
+  most of its requests ("Quota exceeded … Requests per minute"). Then
+  `rclone authorize drive <client_id> <client_secret>` (browser login as the
+  Drive's Google account) and `rclone config create dpd_drive drive
+  scope=drive client_id … client_secret … token '<json it printed>'
+  --non-interactive`. rclone keeps all three in its
+  own config; nothing in this repo reads them.
 - `just pull [host] [dir]` mirrors a server's `data/` folder into the local
   one (defaults: SSH host `epitaka`, repo `/root/epitaka-translator`), so
   stats and export can run locally on the server's work. The server first
