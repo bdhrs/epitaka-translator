@@ -15,10 +15,10 @@ _default:
         for line in lines[1:]:
             print(" " * (pad + 2) + line)
 
-# Translate everything in the background: Claude, then DeepSeek V4.1 on Azure while Claude's limit resets.
-run lang="kn": (relay lang)
+# Translate everything in the background, then follow the log. Ctrl+C stops watching, not the run.
+run lang="kn": (relay lang) (tail lang)
 
-# Same as run.
+# Start the background run without following the log; run adds the tail.
 relay lang="kn":
     nohup ./runner.sh {{lang}} claude:sonnet+azure:DeepSeek-V4.1-Flash >> data/run_{{lang}}.log 2>&1 &
     @echo "Started in the background. Watch: just tail {{lang}}   Stop: just stop {{lang}}"
