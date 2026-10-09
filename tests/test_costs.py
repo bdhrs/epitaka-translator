@@ -34,6 +34,26 @@ def test_deepseek_price_peak_and_off_peak(t, usd):
     assert costs.call_cost("deepseek:deepseek-v4-flash", MILLION_EACH, t) == pytest.approx(usd)
 
 
+@pytest.mark.parametrize("t", [MON_PEAK, MON_OFFPEAK, SAT_MORNING])
+def test_azure_price_has_no_off_peak_discount(t):
+    usage = {"prompt_tokens": 2_000_000, "completion_tokens": 1_000_000,
+             "prompt_tokens_details": {"cached_tokens": 1_000_000}}
+    assert costs.call_cost("azure:DeepSeek-V4.1-Flash", usage, t) == pytest.approx(1.506)
+
+
+def test_azure_call_is_logged_with_cached_tokens(monkeypatch):
+    monkeypatch.setenv("AZURE_KEY_1", "a1")
+    usage = {"prompt_tokens": 1000, "completion_tokens": 50,
+             "prompt_tokens_details": {"cached_tokens": 100}}
+    monkeypatch.setattr(ai.ai_openai_compat, "chat", lambda *a: ("ok", 200, "", usage))
+
+    assert ai.call_gemini(ai.make_rotator([]), "p", "s",
+                          models=["azure:DeepSeek-V4.1-Flash"]) == "ok"
+    (row,) = rows()
+    assert (row["cache_hit_tokens"], row["cache_miss_tokens"], row["output_tokens"]) == ("100", "900", "50")
+    assert float(row["usd"]) == pytest.approx((100 * 0.006 + 900 * 0.30 + 50 * 1.20) / 1e6, abs=1e-6)
+
+
 def test_unpriced_models_are_free():
     assert costs.call_cost("gemini-3.5-flash", MILLION_EACH, MON_PEAK) == 0
     assert costs.call_cost("openrouter:stealth/space-bunny-alpha", MILLION_EACH, MON_PEAK) == 0

@@ -31,7 +31,7 @@ PLAN_FEE_USD = 20.0       # Claude plan, per month
 IDLE_SECONDS = 600        # a longer gap before a call is not counted as work
 SESSION_GAP_SECONDS = 1800  # a longer gap between ok calls starts a new session (the real log has a 12 min gap after the first call)
 MIN_CALLS_TO_FORECAST = 5
-PAID_PROVIDERS = {"deepseek", "openrouter"}
+PAID_PROVIDERS = {"deepseek", "openrouter", "azure"}
 READINGS_FIELDS = ["time_utc", "percent", "reset_utc"]
 
 # Same rule as book_translator.fetch_paragraphs_range: a line is worth

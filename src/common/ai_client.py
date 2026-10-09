@@ -164,7 +164,7 @@ class AllKeysExhaustedError(RuntimeError):
 
 
 # "claude" needs no real key: CLAUDE_KEY_1 only marks the provider as wanted.
-PROVIDERS = ("gemini", "deepseek", "openrouter", "claude")
+PROVIDERS = ("gemini", "deepseek", "openrouter", "azure", "claude")
 
 
 class CompatError(RuntimeError):
@@ -219,8 +219,8 @@ class KeyRotator:
         self._lock = threading.Lock()
         if not keys:
             raise RuntimeError(
-                "No API keys configured. Set GEMINI_KEY_<N>, DEEPSEEK_KEY_<N> "
-                "or OPENROUTER_KEY_<N> env vars, or pass --api-keys."
+                "No API keys configured. Set GEMINI_KEY_<N>, DEEPSEEK_KEY_<N>, "
+                "OPENROUTER_KEY_<N> or AZURE_KEY_<N> env vars, or pass --api-keys."
             )
         self._keys      = list(keys)
         self._index     = 0
@@ -546,8 +546,8 @@ class KeyRotator:
 def make_rotator(api_keys: list[str]) -> KeyRotator:
     """
     Build a KeyRotator from an explicit --api-keys list, or, if that's empty,
-    from every GEMINI_KEY_<N>, DEEPSEEK_KEY_<N> and OPENROUTER_KEY_<N>
-    environment variable that's set.
+    from every GEMINI_KEY_<N>, DEEPSEEK_KEY_<N>, OPENROUTER_KEY_<N> and
+    AZURE_KEY_<N> environment variable that's set.
 
     When loading from env vars, each key is labeled with its env var name
     (e.g. "GEMINI_KEY_23"), so later logs/state ("Key removed: GEMINI_KEY_23
@@ -559,7 +559,7 @@ def make_rotator(api_keys: list[str]) -> KeyRotator:
     env_items = [
         (k, v.strip())
         for k, v in os.environ.items()
-        if re.match(r"^(GEMINI|DEEPSEEK|OPENROUTER|CLAUDE)_KEY_\d+$", k) and v.strip()
+        if re.match(r"^(GEMINI|DEEPSEEK|OPENROUTER|AZURE|CLAUDE)_KEY_\d+$", k) and v.strip()
     ]
     # Sort by the numeric suffix so labels/logs come out in a sane order
     # (GEMINI_KEY_2 before GEMINI_KEY_10), not alphabetical/env-dict order.

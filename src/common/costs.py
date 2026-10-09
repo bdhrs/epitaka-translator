@@ -20,6 +20,10 @@ from . import common_utils as cu
 PRICES = {
     "deepseek:deepseek-flash":    (0.006, 0.30, 1.20),
     "deepseek:deepseek-v4-flash": (0.006, 0.30, 1.20),
+    # Azure global deployment, no off-peak discount. From the Azure Retail
+    # Prices API (prices.azure.com, product "Azure Deepseek Models", meters
+    # "V4.1 Flash ... Glbl", effective 2026-10-01), checked 2026-10-09.
+    "azure:DeepSeek-V4.1-Flash":  (0.006, 0.30, 1.20),
 }
 
 # Gemini, standard paid tier, USD per 1M tokens: (cached input, input, output
@@ -53,11 +57,19 @@ def _gemini_price(model: str, prompt_tokens: int, t: datetime) -> tuple[float, f
     return None
 
 
+def _hit_miss(usage: dict) -> tuple[int, int]:
+    """Cached and uncached input tokens, from DeepSeek's report or the OpenAI-style one."""
+    hit = usage.get("prompt_cache_hit_tokens",
+                    (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0))
+    # OpenRouter and Azure report prompt_tokens with cached_tokens inside it.
+    miss = usage.get("prompt_cache_miss_tokens", usage.get("prompt_tokens", 0) - hit)
+    return hit, miss
+
+
 def call_cost(model: str, usage: dict, t: datetime) -> float:
     if "cost" in usage:
         return float(usage["cost"] or 0)
-    hit_tokens = usage.get("prompt_cache_hit_tokens", 0)
-    miss_tokens = usage.get("prompt_cache_miss_tokens", 0)
+    hit_tokens, miss_tokens = _hit_miss(usage)
     gemini = _gemini_price(model, hit_tokens + miss_tokens, t)
     if gemini:
         hit, miss, out = gemini
@@ -68,9 +80,10 @@ def call_cost(model: str, usage: dict, t: datetime) -> float:
     if not price:
         return 0.0
     hit, miss, out = price
-    usd = (usage.get("prompt_cache_hit_tokens", 0) * hit
-           + usage.get("prompt_cache_miss_tokens", 0) * miss
+    usd = (hit_tokens * hit + miss_tokens * miss
            + usage.get("completion_tokens", 0) * out) / 1_000_000
+    if not model.startswith("deepseek:"):
+        return usd  # the off-peak half price is DeepSeek's own discount
     return usd if is_peak(t) else usd / 2
 
 
@@ -116,10 +129,7 @@ def record(model: str, label: str, usage: dict, t: datetime | None = None, *,
     """
     global _run_total, _all_time
     t = t or datetime.now(timezone.utc)
-    hit = usage.get("prompt_cache_hit_tokens",
-                    (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0))
-    # OpenRouter reports prompt_tokens with cached_tokens inside it.
-    miss = usage.get("prompt_cache_miss_tokens", usage.get("prompt_tokens", 0) - hit)
+    hit, miss = _hit_miss(usage)
     try:
         usd = call_cost(model, usage, t)
     except (TypeError, ValueError) as e:  # never fail an already-paid call over accounting

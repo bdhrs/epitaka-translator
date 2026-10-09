@@ -52,6 +52,27 @@ def test_openrouter_has_no_thinking(monkeypatch):
     assert seen["json"]["max_tokens"] == 65536
 
 
+def test_azure_url_comes_from_env(monkeypatch):
+    seen = {}
+    body = {"choices": [{"message": {"content": "ok"}}]}
+    monkeypatch.setattr(requests, "post", fake_post(FakeResponse(200, body), seen))
+    monkeypatch.setenv("AZURE_BASE_URL", "https://example.services.ai.azure.com/openai/v1/")
+
+    assert call("azure")[0] == "ok"
+    assert seen["url"] == "https://example.services.ai.azure.com/openai/v1/chat/completions"
+    assert seen["headers"]["Authorization"] == "Bearer k1"
+
+
+def test_azure_without_base_url_fails_without_a_request(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(requests, "post", fake_post(FakeResponse(200, {}), seen))
+    monkeypatch.delenv("AZURE_BASE_URL", raising=False)
+
+    text, status, error, _ = call("azure")
+    assert (text, status, seen) == (None, None, {})
+    assert "AZURE_BASE_URL" in error
+
+
 def test_http_429_returns_status(monkeypatch):
     monkeypatch.setattr(requests, "post", fake_post(FakeResponse(429, text="slow down"), {}))
     text, status, error, _ = call()

@@ -1,9 +1,11 @@
 """
 ai_openai_compat.py — one call to an OpenAI-compatible chat/completions
-endpoint (DeepSeek, OpenRouter). Cut down from dpd-db's
+endpoint (DeepSeek, OpenRouter, Azure). Cut down from dpd-db's
 tools/ai_openai_compat.py. Retries, key rotation and model fallback live in
 ai_client._generate_with_retry, not here.
 """
+
+import os
 
 import requests
 
@@ -11,6 +13,15 @@ CHAT_URLS = {
     "deepseek":   "https://api.deepseek.com/chat/completions",
     "openrouter": "https://openrouter.ai/api/v1/chat/completions",
 }
+
+
+def _chat_url(provider: str) -> str | None:
+    if provider == "azure":
+        # The address names the owner's Azure account, so it stays in .env and
+        # out of this public repo. Read per call: .env loads after this import.
+        base = os.environ.get("AZURE_BASE_URL", "").strip().rstrip("/")
+        return f"{base}/chat/completions" if base else None
+    return CHAT_URLS[provider]
 
 # DeepSeek's reasoning mode can spend the whole output budget on hidden
 # reasoning and return empty content (seen in dpd-db and ai_client_bai.py).
@@ -43,9 +54,12 @@ def chat(
         ],
         **EXTRA_PAYLOAD.get(provider, {}),
     }
+    url = _chat_url(provider)
+    if url is None:
+        return None, None, f"{provider.upper()}_BASE_URL is not set in .env", {}
     try:
         r = requests.post(
-            CHAT_URLS[provider],
+            url,
             headers={"Authorization": f"Bearer {key}"},
             json=payload,
             timeout=timeout,

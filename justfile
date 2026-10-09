@@ -15,12 +15,12 @@ _default:
         for line in lines[1:]:
             print(" " * (pad + 2) + line)
 
-# Translate everything in the background: Claude, then DeepSeek while Claude's limit resets.
+# Translate everything in the background: Claude, then DeepSeek V4.1 on Azure while Claude's limit resets.
 run lang="kn": (relay lang)
 
 # Same as run.
 relay lang="kn":
-    nohup ./runner.sh {{lang}} claude:sonnet+deepseek:deepseek-v4-flash >> data/run_{{lang}}.log 2>&1 &
+    nohup ./runner.sh {{lang}} claude:sonnet+azure:DeepSeek-V4.1-Flash >> data/run_{{lang}}.log 2>&1 &
     @echo "Started in the background. Watch: just tail {{lang}}   Stop: just stop {{lang}}"
 
 # Translate everything with DeepSeek only, in this window.
@@ -52,6 +52,9 @@ upload lang="kn" folder="ePitaka Proofreading" remote="dpd_drive":
     rclone copy exports/{{lang}} "{{remote}}:{{folder}}/{{lang}}" \
         --include "*.txt" --drive-import-formats txt \
         --drive-export-formats txt --ignore-existing -v
+
+# Pull the latest data, export Kannada, then upload the new files to Google Drive.
+drive lang="kn": (pull) (export lang) (upload lang)
 
 # Copy the server's data folder to this machine. Safe during a run.
 pull host="epitaka" dir="/root/epitaka-translator":

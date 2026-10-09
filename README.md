@@ -357,6 +357,20 @@ either provider removes that key (402 is DeepSeek's "insufficient balance").
 The calls go through `src/common/ai_openai_compat.py` (single-turn only; tool
 calling stays Gemini-only).
 
+### DeepSeek on Azure
+
+A shared Azure AI Foundry deployment works the same way. Its address names the
+owner's Azure account, so it lives in `.env`, not in the code:
+
+```dotenv
+AZURE_BASE_URL="https://<resource>.services.ai.azure.com/openai/v1/"
+AZURE_KEY_1="..."
+```
+
+The model is `azure:<deployment name>`, e.g. `azure:DeepSeek-V4.1-Flash`;
+`just run` relays from Claude to it. Azure has no off-peak discount, and an
+empty reply usually means Azure's content filter blocked the prompt.
+
 ### Cost ledger
 
 Every AI call appends one line to `data/costs.csv` (time, model, book +
