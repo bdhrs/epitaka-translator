@@ -1443,14 +1443,108 @@ def ensure_confidence_columns(epitaka_db: str):
 # Main
 # ══════════════════════════════════════════════════════════════════
 
-def next_unfinished_book(epitaka_db: str, lang_db: str) -> str | None:
-    """First preset book that still has a pending sentence, or None."""
-    for book_id in (b.strip() for b in PRESET_BOOKS.split(",") if b.strip()):
+def first_unfinished_book(epitaka_db: str, lang_db: str, book_ids: list[str]) -> str | None:
+    """First of book_ids that still has a pending sentence, or None."""
+    for book_id in book_ids:
         # Same pending rule as the translation run itself, so "next" never
         # picks a book the run would then find nothing to do in.
         if fetch_paragraphs_range(epitaka_db, book_id, 1, sys.maxsize, False, lang_db):
             return book_id
     return None
+
+
+def next_unfinished_book(epitaka_db: str, lang_db: str) -> str | None:
+    """First preset book that still has a pending sentence, or None."""
+    return first_unfinished_book(
+        epitaka_db, lang_db, [b.strip() for b in PRESET_BOOKS.split(",") if b.strip()]
+    )
+
+
+def sutta_vinaya_mula_books(epitaka_db: str) -> set[str]:
+    """The Sutta + Vinaya Mūla book_ids from the books table (empty if unknown)."""
+    try:
+        with _connect(epitaka_db) as conn:
+            return {r[0] for r in conn.execute(
+                "SELECT book_id FROM books "
+                "WHERE nikaya IN ('Sutta Piṭaka', 'Vinaya Piṭaka') AND category = 'Mūla'")}
+    except sqlite3.OperationalError:  # no books table (tiny test DBs) — no gate
+        return set()
+
+
+def mula_books_in(epitaka_db: str, all_books: list[str]) -> list[str]:
+    """The Sutta + Vinaya Mūla books among all_books, in the same order."""
+    mula = sutta_vinaya_mula_books(epitaka_db)
+    return [b for b in all_books if b in mula]
+
+
+def mula_pause_marker(epitaka_db: str, lang: str) -> Path:
+    """The marker file saying the mūla pause has been lifted for this language."""
+    return Path(epitaka_db).parent / f"mula_pause_{lang}.flag"
+
+
+def commentary_started(epitaka_db: str, lang_db: str, all_books: list[str]) -> bool:
+    """True when any non-Mūla preset book already has a translated line."""
+    try:
+        with _connect(epitaka_db) as conn:
+            # Abhidhamma Mūla is not commentary: it comes after the pause too.
+            all_mula = {r[0] for r in conn.execute(
+                "SELECT book_id FROM books WHERE category = 'Mūla'")}
+    except sqlite3.OperationalError:  # no books table (tiny test DBs) — no gate
+        return False
+    non_mula = set(all_books) - all_mula
+    if not non_mula or not Path(lang_db).exists():
+        return False
+    with _connect(lang_db) as lconn:
+        done = {r[0] for r in lconn.execute(
+            "SELECT DISTINCT book_id FROM sentences "
+            "WHERE translation IS NOT NULL AND translation != ''")}
+    return bool(done & non_mula)
+
+
+def mula_pause_due(epitaka_db: str, lang_db: str, lang: str, all_books: list[str],
+                   dry_run: bool = False) -> bool:
+    """True when the natural pause applies: every Sutta + Vinaya Mūla book is
+    translated, no commentary line exists yet, and this is the first run to
+    notice (no marker file yet).
+
+    The pause is the budget stop agreed with the sponsor: a preset run ends
+    after the mūla and only a fresh run of the same command lifts it, letting
+    that run continue with Abhidhamma, commentaries (aṭṭhakathā) and
+    sub-commentaries (ṭīkā). Writes the marker file when returning True.
+    """
+    mula = mula_books_in(epitaka_db, all_books)
+    if not mula:
+        return False
+    if commentary_started(epitaka_db, lang_db, all_books):
+        return False  # already past the root texts — pausing now would gain nothing
+    marker = mula_pause_marker(epitaka_db, lang)
+    if marker.exists():
+        return False  # a previous run already paused; this run continues
+    if first_unfinished_book(epitaka_db, lang_db, mula):
+        return False  # mūla work left — no pause, keep translating
+    if not dry_run:  # a dry run reports the pause but must not use it up
+        marker.write_text(time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()), encoding="utf-8")
+    return True
+
+
+def lift_mula_pause_if_done(epitaka_db: str, lang_db: str, lang: str,
+                            all_books: list[str]) -> bool:
+    """Called after a run's book loop: when this run has just finished the last
+    Sutta + Vinaya Mūla book, write the marker so the NEXT run goes straight
+    to the rest of the preset — no wasted empty run in between.
+
+    Returns True when the pause was lifted here.
+    """
+    mula = mula_books_in(epitaka_db, all_books)
+    if not mula:
+        return False
+    marker = mula_pause_marker(epitaka_db, lang)
+    if marker.exists():
+        return False
+    if first_unfinished_book(epitaka_db, lang_db, mula):
+        return False  # mūla work left — the pause is not due yet
+    marker.write_text(time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()), encoding="utf-8")
+    return True
 
 
 def main() -> int:
@@ -1527,9 +1621,30 @@ def main() -> int:
 
     # Resolve book list
     if args.books.strip().lower() == "preset":
-        book_list = [b.strip() for b in PRESET_BOOKS.split(",") if b.strip()]
-        print(f"Using preset: {len(book_list)} books.")
+        all_books = [b.strip() for b in PRESET_BOOKS.split(",") if b.strip()]
+        mula_books = mula_books_in(epitaka_db, all_books)
+        if mula_pause_due(epitaka_db, lang_db, args.lang, all_books, args.dry_run):
+            print("[phase] Every Sutta and Vinaya Mūla book is translated — "
+                  "natural pause before the commentaries.")
+            print("[phase] Abhidhamma, aṭṭhakathā and ṭīkā stay untranslated; "
+                  "run the same command again to continue with them.")
+            return 0
+        if mula_books and first_unfinished_book(epitaka_db, lang_db, mula_books):
+            book_list = mula_books
+            print(f"[phase] Mūla phase: this run covers only the {len(mula_books)} "
+                  f"Sutta/Vinaya Mūla books; the rest waits for a later run.")
+        else:
+            book_list = all_books
+            print(f"Using preset: {len(book_list)} books.")
     elif args.books.strip().lower() == "next":
+        if mula_pause_due(epitaka_db, lang_db, args.lang,
+                          [b.strip() for b in PRESET_BOOKS.split(",") if b.strip()],
+                          args.dry_run):
+            print("[phase] Every Sutta and Vinaya Mūla book is translated — "
+                  "natural pause before the commentaries.")
+            print("[phase] Run the same command again to continue with "
+                  "Abhidhamma, aṭṭhakathā and ṭīkā.")
+            return 0
         book = next_unfinished_book(epitaka_db, lang_db)
         if book is None:
             print("Every preset book is finished.")
@@ -1598,6 +1713,17 @@ def main() -> int:
         grand_remarks   += r
 
         print(f"Book {book_id} done — sentences: {s}, glossary: {g}, remarks: {r}.")
+
+    # If this run completed the mūla, lift the pause right here: the next run
+    # continues with everything instead of first wasting a run on the pause.
+    # Only preset/next runs own the pause: a dry run saves nothing and an
+    # explicit book list may rerun a finished book without doing mūla work.
+    if (not args.dry_run and args.books.strip().lower() in ("preset", "next")
+            and lift_mula_pause_if_done(
+            epitaka_db, lang_db, args.lang,
+            [b.strip() for b in PRESET_BOOKS.split(",") if b.strip()])):
+        print("[phase] Every Sutta and Vinaya Mūla book is translated — natural pause.")
+        print("[phase] The next run continues with Abhidhamma, aṭṭhakathā and ṭīkā.")
 
     if stop_due(args):
         print(f"[STOP-AT] Stop time reached. Sentences saved this run: {grand_sentences}.")  # runner.sh looks for this tag

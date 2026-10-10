@@ -493,6 +493,16 @@ order gives poorer terminology consistency.
 `--books next` picks one book from the same list: the first that still has
 an untranslated line (lines under 3 characters of Pāli do not count).
 
+### The mūla pause
+
+A `preset` (or `next`) run stops **after the Sutta and Vinaya root texts
+(Mūla) are done** and prints a `[phase]` message: Abhidhamma, aṭṭhakathā and
+ṭīkā stay untranslated until you deliberately continue. The run that
+finishes the last Mūla book records this in `data/mula_pause_<lang>.flag`;
+the same command run again sees the flag and continues with the rest of
+the order. A language that already has a translated commentary line
+skips the pause — it only guards the transition out of the root texts.
+
 ## Data files and downloads
 
 `runner.sh` checks `./data/` (override with `DATA_DIR=...`) for these
