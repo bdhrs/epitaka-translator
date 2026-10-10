@@ -1718,14 +1718,18 @@ def main() -> int:
     # continues with everything instead of first wasting a run on the pause.
     # Only preset/next runs own the pause: a dry run saves nothing and an
     # explicit book list may rerun a finished book without doing mūla work.
-    if (not args.dry_run and args.books.strip().lower() in ("preset", "next")
-            and lift_mula_pause_if_done(
+    pause_reached = (
+        not args.dry_run and args.books.strip().lower() in ("preset", "next")
+        and lift_mula_pause_if_done(
             epitaka_db, lang_db, args.lang,
-            [b.strip() for b in PRESET_BOOKS.split(",") if b.strip()])):
+            [b.strip() for b in PRESET_BOOKS.split(",") if b.strip()]))
+    if pause_reached:
         print("[phase] Every Sutta and Vinaya Mūla book is translated — natural pause.")
         print("[phase] The next run continues with Abhidhamma, aṭṭhakathā and ṭīkā.")
 
-    if stop_due(args):
+    # At the pause, end as a normal finish even when the stop time is also due:
+    # the stop tag would make runner.sh switch models and run on past the pause.
+    if stop_due(args) and not pause_reached:
         print(f"[STOP-AT] Stop time reached. Sentences saved this run: {grand_sentences}.")  # runner.sh looks for this tag
         return 0
 

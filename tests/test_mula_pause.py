@@ -184,3 +184,26 @@ def test_abhidhamma_translation_is_not_commentary(tmp_path):
     epitaka_db, lang_db = _dbs(tmp_path, mula_done=True, comm_done=[("Dhs", 1, 1, "x")])
     assert bt.commentary_started(epitaka_db, lang_db, ALL_BOOKS) is False
     assert bt.mula_pause_due(epitaka_db, lang_db, "kn", ALL_BOOKS) is True
+
+
+def test_stop_time_at_the_pause_still_ends_the_run_as_finished(tmp_path, monkeypatch, capsys):
+    # runner.sh answers the stop tag by switching models and running on, past the pause
+    epitaka_db, lang_db = _dbs(tmp_path, mula_done=False)
+    processed = []
+
+    def fake_process_book(**kwargs):
+        processed.append(kwargs["book_id"])
+        with sqlite3.connect(lang_db) as c:
+            c.execute("INSERT OR REPLACE INTO sentences (book_id, para_id, line_id, translation) "
+                      "VALUES (?,?,?,?)", (kwargs["book_id"], 1, 1, "x"))
+        return 1, 0, 0
+
+    monkeypatch.setattr(bt, "process_book", fake_process_book)
+    monkeypatch.setattr(bt.ai, "make_rotator", lambda keys: object())
+    # the stop time passes only once both mūla books are saved
+    monkeypatch.setattr(bt, "stop_due", lambda args: len(processed) >= 2)
+    assert _run_main(monkeypatch, tmp_path, epitaka_db) == 0
+    out = capsys.readouterr().out
+    assert processed == ["S-i", "Vin-i"]
+    assert marker(tmp_path).exists()
+    assert "[STOP-AT]" not in out
