@@ -31,6 +31,49 @@ def test_pali_in_kannada_then_translation(tmp_path):
     )  # para 282 has no translation yet, so it is left out
 
 
+def make_remarks(path, rows):
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE translation_remarks (id INTEGER PRIMARY KEY, book_id TEXT, para_id INT, "
+                     "line_id INT, translation TEXT, conflict TEXT, note TEXT)")
+        conn.executemany("INSERT INTO translation_remarks (book_id, para_id, line_id, translation, conflict, note) "
+                         "VALUES (?,?,?,?,?,?)", rows)
+
+
+def remark_fixture(tmp_path):
+    src = tmp_path / "epitaka.db"
+    make_db(src, "pali", [("M-i", 281, 1, "Evaṃ me sutaṃ"), ("M-i", 282, 1, "Tatra kho")])
+    lang_db = tmp_path / "epitaka_kn.db"
+    make_db(lang_db, "translation", [("M-i", 281, 1, "ನಾನು ಹೀಗೆ ಕೇಳಿದೆನು"), ("M-i", 282, 1, "ಅಲ್ಲಿ")])
+    make_remarks(lang_db, [
+        ("M-i", 281, 1, "ಹೀಗೆ ಕೇಳಿದ್ದೇನೆ", "'sutaṃ' ಅನುವಾದಿಸಿಲ್ಲ", "wrong"),
+        ("M-i", 282, 1, "ಹಳೆಯದು", "translator's own explanation", "ಅಟ್ಠಕಥೆ ಅನುಸರಿಸಿದೆ"),
+    ])
+    return src
+
+
+def test_review_remarks_follow_their_paragraph_in_the_local_script(tmp_path):
+    text = export_text.export_text(str(remark_fixture(tmp_path)), "kn", "M-i", 280, 410)
+
+    assert text == (
+        "ಏವಂ ಮೇ ಸುತಂ\n"
+        "ನಾನು ಹೀಗೆ ಕೇಳಿದೆನು\n"
+        "ಪರಿಶೀಲನಾ ಟಿಪ್ಪಣಿಗಳು:\n"
+        "  ಲೈನ್ 1 [ತಪ್ಪು]: 'ಸುತಂ' ಅನುವಾದಿಸಿಲ್ಲ\n"
+        "    ಸೂಚಿತ ತಿದ್ದುಪಡಿ: ಹೀಗೆ ಕೇಳಿದ್ದೇನೆ\n"
+        "\n"
+        "ತತ್ರ ಖೋ\n"
+        "ಅಲ್ಲಿ\n"
+        "\n"
+    )  # the translator's own remark (note is not a severity) stays out
+    assert not any(c.isascii() and c.isalpha() for c in text)
+
+
+def test_remarks_can_be_left_out(tmp_path):
+    text = export_text.export_text(str(remark_fixture(tmp_path)), "kn", "M-i", 280, 410, remarks=False)
+
+    assert "ಪರಿಶೀಲನಾ" not in text
+
+
 def make_headings(path, rows):
     with sqlite3.connect(path) as conn:
         conn.execute("CREATE TABLE headings (book_id TEXT, para_id INT, level INT, title TEXT, sc_id TEXT)")

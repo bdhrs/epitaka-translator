@@ -62,6 +62,38 @@ def _paragraphs(rows: list[tuple]) -> dict[int, str]:
     return {p: " ".join(lines) for p, lines in paras.items()}
 
 
+_SEVERITY_KAN = {"wrong": "ತಪ್ಪು", "critical": "ಗಂಭೀರ"}
+
+
+def _remarks_for_range(lang_db: str, book: str, start: int, end: int) -> dict[int, list[tuple]]:
+    """Review remarks (verify_translation.py) by para_id; none when the table is missing.
+
+    Review remarks carry their severity in `note`; the translator's own remarks
+    (older rows) put an explanation there, so they are left out.
+    """
+    if not _read(lang_db, "SELECT 1 FROM sqlite_master WHERE name='translation_remarks'", ()):
+        return {}
+    rows = _read(lang_db, "SELECT para_id, line_id, note, conflict, translation FROM translation_remarks "
+                          "WHERE book_id=? AND para_id BETWEEN ? AND ? AND note IN ('wrong', 'critical') "
+                          "ORDER BY para_id, line_id, id", (book, start, end))
+    out: dict[int, list[tuple]] = defaultdict(list)
+    for para_id, *rest in rows:
+        out[para_id].append(tuple(rest))
+    return dict(out)
+
+
+def _remark_annotation(remarks: list[tuple], script: str | None) -> str:
+    """One paragraph's review remarks as a Kannada block; all of it in the local script."""
+    if not remarks:
+        return ""
+    lines = ["ಪರಿಶೀಲನಾ ಟಿಪ್ಪಣಿಗಳು:"]
+    for line_id, severity, explanation, suggestion in remarks:
+        lines.append(f"  ಲೈನ್ {line_id} [{_SEVERITY_KAN[severity]}]: {(explanation or '').strip()}")
+        if (suggestion or "").strip():
+            lines.append(f"    ಸೂಚಿತ ತಿದ್ದುಪಡಿ: {suggestion.strip()}")
+    return "\n" + _to_script("\n".join(lines), script)
+
+
 def sutta_ranges(epitaka_db: str, book: str) -> list[tuple[str, int, int]]:
     """(sc_id, first para_id, last para_id) per sutta, in book order.
 
@@ -83,16 +115,22 @@ def sutta_ranges(epitaka_db: str, book: str) -> list[tuple[str, int, int]]:
 
 
 def export_text(epitaka_db: str, lang: str, book: str, start: int, end: int,
-                script: str | None = None) -> str:
+                script: str | None = None, remarks: bool = True) -> str:
     sql = ("SELECT para_id, line_id, {col} FROM sentences "
            "WHERE book_id=? AND para_id BETWEEN ? AND ? ORDER BY para_id, line_id")
     pali = _paragraphs(_read(epitaka_db, sql.format(col="pali"), (book, start, end)))
     trans = _paragraphs(_read(cu.lang_db_path(epitaka_db, lang),
                               sql.format(col="translation"), (book, start, end)))
 
-    pali = {p: _to_script(t, script or PALI_SCRIPTS.get(lang)) for p, t in pali.items() if p in trans}
+    script = script or PALI_SCRIPTS.get(lang)
+    pali = {p: _to_script(t, script) for p, t in pali.items() if p in trans}
 
-    return "".join(f"{pali[p]}\n{trans[p]}\n\n" for p in sorted(pali))
+    notes = _remarks_for_range(cu.lang_db_path(epitaka_db, lang), book, start, end) if remarks else {}
+
+    return "".join(
+        f"{pali[p]}\n{trans[p]}{_remark_annotation(notes.get(p, []), script)}\n\n"
+        for p in sorted(pali)
+    )
 
 
 def _line_ids(path: str, col: str, book: str, start: int, end: int) -> set[tuple[int, int]]:
@@ -103,7 +141,7 @@ def _line_ids(path: str, col: str, book: str, start: int, end: int) -> set[tuple
 
 
 def export_suttas(epitaka_db: str, lang: str, out_dir: str,
-                  script: str | None = None) -> tuple[int, list[str]]:
+                  script: str | None = None, remarks: bool = True) -> tuple[int, list[str]]:
     """One <lang>_<sc_id>.txt per finished sutta; returns (files written, skipped-sutta notes)."""
     lang_db = cu.lang_db_path(epitaka_db, lang)
     done = {b for (b,) in _read(lang_db, "SELECT DISTINCT book_id FROM sentences WHERE translation <> ''", ())}
@@ -125,7 +163,7 @@ def export_suttas(epitaka_db: str, lang: str, out_dir: str,
                 skipped.append(f"{sc}: {len(trans)} of {len(pali)} lines")
                 continue
             with open(os.path.join(out_dir, f"{lang}_{sc}.txt"), "w", encoding="utf-8") as f:
-                f.write(export_text(epitaka_db, lang, book, start, end, script))
+                f.write(export_text(epitaka_db, lang, book, start, end, script, remarks))
             written += 1
     return written, skipped
 
@@ -140,13 +178,15 @@ def main() -> int:
     ap.add_argument("--out-dir", help="Folder for the per-sutta files (without --book); its old .txt files are removed.")
     ap.add_argument("--script", default=None,
                     help="Aksharamukha script for the Pāli (default: the target language's script).")
+    ap.add_argument("--no-remarks", action="store_true",
+                    help="Leave out the review remarks (from verify_translation.py) under each paragraph.")
     ap.add_argument("--epitaka-db", default=cu.EPITAKA_DB)
     args = ap.parse_args()
 
     if args.book:
         if not args.out:
             ap.error("--book needs --out")
-        text = export_text(args.epitaka_db, args.lang, args.book, args.start, args.end, args.script)
+        text = export_text(args.epitaka_db, args.lang, args.book, args.start, args.end, args.script, not args.no_remarks)
         with open(args.out, "w", encoding="utf-8") as f:
             f.write(text)
         print(f"Wrote {args.out}")
@@ -154,7 +194,7 @@ def main() -> int:
 
     if not args.out_dir:
         ap.error("give --book with --out, or --out-dir")
-    written, skipped = export_suttas(args.epitaka_db, args.lang, args.out_dir, args.script)
+    written, skipped = export_suttas(args.epitaka_db, args.lang, args.out_dir, args.script, not args.no_remarks)
     print(f"Wrote {written} files to {args.out_dir}")
     for note in skipped:
         print(f"Skipped, not finished: {note}")
