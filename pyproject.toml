@@ -22,3 +22,11 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+filterwarnings = [
+    # aksharamukha 2.3 is pinned (see the <3.14 note above) and imports ast.Str, deprecated since Python 3.12.
+    "ignore:ast.Str is deprecated",
+]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"

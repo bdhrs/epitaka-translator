@@ -33,7 +33,7 @@ def test_scratch_copies_written_files_links_the_rest_and_starts_empty(tmp_path):
 
 def fake_subprocess(calls, busy_models=(), crashing_models=(), bad_export_models=()):
     """Stands in for subprocess.run. Busy: exits 0, saves nothing. Crashing: saves, exits 1."""
-    def run(cmd, cwd=None, check=False):
+    def run(cmd, **_):
         calls.append(cmd)
         if cmd[2].endswith("book_translator.py"):
             model = cmd[cmd.index("--model") + 1]
@@ -63,6 +63,7 @@ def test_busy_model_reports_failure_and_good_model_is_exported(monkeypatch, tmp_
     good = cm.run_model("good-model", args, out_dir)
     busy = cm.run_model("busy-model", args, out_dir)
 
+    assert good is not None
     assert good == out_dir / "good-model.txt" and good.read_text() == "exported"
     assert busy is None
     assert not (out_dir / "busy-model.txt").exists()
@@ -112,7 +113,7 @@ def test_old_result_does_not_survive_a_failed_rerun(monkeypatch, tmp_path):
 
 
 def test_translator_error_exit_is_a_failure_even_if_lines_were_saved(monkeypatch, tmp_path):
-    data, out_dir, results = run_models(monkeypatch, tmp_path, ["crash-model"], crashing_models={"crash-model"})
+    _, out_dir, results = run_models(monkeypatch, tmp_path, ["crash-model"], crashing_models={"crash-model"})
 
     assert results["crash-model"] is None
     assert not (out_dir / "crash-model.txt").exists()
@@ -120,7 +121,7 @@ def test_translator_error_exit_is_a_failure_even_if_lines_were_saved(monkeypatch
 
 
 def test_failed_export_fails_that_model_only_and_cleans_up(monkeypatch, tmp_path):
-    data, out_dir, results = run_models(
+    _, out_dir, results = run_models(
         monkeypatch, tmp_path, ["bad-export", "good-model"], bad_export_models={"bad-export"},
     )
 

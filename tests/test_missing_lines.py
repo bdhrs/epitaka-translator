@@ -1,7 +1,11 @@
 import json
+import os
 import sqlite3
 import sys
 import types
+from typing import Callable, cast
+
+import pytest
 
 sys.argv = sys.argv[:1]  # book_translator pre-parses --lang from argv at import time
 import book_translator as bt  # noqa: E402
@@ -12,15 +16,23 @@ PALI = {1: "alpha pali line", 2: "bravo pali line", 3: "charlie pali line", 4: "
 KANNADA = {1: "ಒಂದು", 2: "ಎರಡು", 3: "ಮೂರು"}
 
 
+@pytest.fixture(autouse=True)
+def no_real_keys(monkeypatch):
+    # Importing book_translator loads the real .env, and no test here may reach a paid API.
+    for k in list(os.environ):
+        if "_KEY_" in k:
+            monkeypatch.delenv(k)
+
+
 class NoContext:
-    def __init__(self, *a, **k):
-        pass
+    def __init__(self, *args, **kwargs):
+        self.args, self.kwargs = args, kwargs
 
     def build(self):
         return ""
 
 
-def setup(tmp_path, monkeypatch, replies, id_type=int):
+def setup(tmp_path, monkeypatch, replies, id_type: Callable[[int], int | str] = int):
     """Run process_book on a one-paragraph book; `replies` is one list of line ids per model call."""
     epitaka_db = str(tmp_path / "epitaka.db")
     lang_db = str(tmp_path / "epitaka_kn.db")
@@ -50,8 +62,8 @@ def setup(tmp_path, monkeypatch, replies, id_type=int):
     args = types.SimpleNamespace(start=1, end=-1, min_lines=50, overwrite=False, max_parts=-1,
                                  max_tokens=3000, lang="kn", dry_run=False,
                                  log_dir=str(tmp_path), model=None)
-    saved, _, _ = bt.process_book("B", args, None, epitaka_db, lang_db, glossary_db, "s",
-                                  None, None, None, models=["m"])
+    saved, _, _ = bt.process_book("B", args, cast(ai.KeyRotator, None), epitaka_db, lang_db,
+                                  glossary_db, "s", models=["m"])
     with sqlite3.connect(lang_db) as c:
         done = {r[0] for r in c.execute("SELECT line_id FROM sentences")}
     return saved, done, prompts
@@ -93,3 +105,11 @@ def test_ids_sent_as_text_do_not_cause_a_wasted_second_call(tmp_path, monkeypatc
 
     assert len(prompts) == 1
     assert done == {1, 2, 3}
+
+
+def test_a_translation_without_its_ids_answers_no_line():
+    chunk = [{"para_id": 1, "pending": [{"line_id": 1}, {"line_id": 2}]}]
+
+    left = bt._unanswered(chunk, [{"translation": "x"}, {"para_id": 1, "translation": "y"}])
+
+    assert left == chunk

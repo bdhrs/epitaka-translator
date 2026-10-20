@@ -1,7 +1,7 @@
 import csv
 import sqlite3
 import types
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -19,7 +19,7 @@ def isolated_env(monkeypatch, tmp_path):
         if "_KEY_" in k:
             monkeypatch.delenv(k)
     monkeypatch.setenv("AI_KEY_STATE_FILE", str(tmp_path / "state.json"))
-    monkeypatch.setattr(ai.time, "sleep", lambda s: None)
+    monkeypatch.setattr(ai.time, "sleep", lambda _: None)
 
 
 def rows():
@@ -62,7 +62,7 @@ def test_claude_limit_gets_a_row_that_keeps_the_reset_time(monkeypatch):
     monkeypatch.setenv("CLAUDE_KEY_1", "c1")
     zero = {"prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 0, "completion_tokens": 0, "api_usd": 0}
     replies = [(None, 429, LIMIT_TEXT, zero), ("ok", 200, "", {**zero, "completion_tokens": 50})]
-    monkeypatch.setattr(ai.ai_claude_code, "chat", lambda *a: replies.pop(0))
+    monkeypatch.setattr(ai.ai_claude_code, "chat", lambda *_: replies.pop(0))
 
     assert ai.call_gemini(ai.make_rotator([]), "p", "s", models=["claude:sonnet"],
                           label="D-i p1-5", lines=12) == "ok"
@@ -80,9 +80,10 @@ def test_gemini_failure_is_logged_too(monkeypatch):
 
     class FakeClient:
         def __init__(self, api_key):
+            self.api_key = api_key
             self.models = self
 
-        def generate_content(self, **kw):
+        def generate_content(self, **_):
             attempts.append(1)
             if len(attempts) == 1:
                 raise RuntimeError("429 RESOURCE_EXHAUSTED: daily quota")
@@ -185,15 +186,17 @@ def test_report_shows_lines_and_the_payment_kind_of_each_model(tmp_path):
 
 def test_weekly_capacity_comes_from_lines_this_week_over_percent_used(tmp_path):
     ledger = tmp_path / "week.csv"
+    # Dated from now: the code only counts the 7 days before the reading, so fixed dates go stale.
+    t_read = datetime.now(timezone.utc)
+    first, second = (f"{t_read - timedelta(days=3, hours=h):%Y-%m-%d %H:%M:%S}" for h in (7, 0))
     ledger.write_text(
         "time_utc,model,label,cache_hit_tokens,cache_miss_tokens,output_tokens,usd,lines,status,seconds,api_usd,detail\n"
-        "2026-10-03 16:00:00,claude:sonnet,D-i p1-5,0,10,5,0,1000,ok,60.0,0.2,\n"
-        "2026-10-03 23:00:00,claude:sonnet,D-i p6-9,0,10,5,0,2983,ok,60.0,0.2,\n", encoding="utf-8")
+        f"{first},claude:sonnet,D-i p1-5,0,10,5,0,1000,ok,60.0,0.2,\n"
+        f"{second},claude:sonnet,D-i p6-9,0,10,5,0,2983,ok,60.0,0.2,\n", encoding="utf-8")
     calls, _, _ = stats.load_calls(ledger, tmp_path / "missing.db")
     readings = tmp_path / "usage_readings.csv"
     stats.add_reading(readings, 9, "")
     # no reset time given: the week starts with the first Claude call, so all 3,983 lines count
-    t_read = datetime.now(timezone.utc)
     capacity = stats.claude_weekly_lines(calls, [(t_read, 9.0, None)])
     assert capacity == pytest.approx(3983 / 0.09)
     assert stats.read_readings(readings)[0][1] == 9.0
@@ -206,7 +209,7 @@ def test_a_late_reply_after_a_timeout_does_not_count_the_lines_twice(monkeypatch
     usage = {"prompt_cache_miss_tokens": 900, "completion_tokens": 50}
     attempts = []
 
-    def chat(*a):
+    def chat(*_):
         attempts.append(1)
         if len(attempts) == 1:
             threading.Event().wait(0.4)  # outlives the 0.05 s timeout; time.sleep is stubbed here

@@ -23,17 +23,17 @@ relay lang="kn":
     nohup ./runner.sh {{lang}} claude:sonnet+azure:DeepSeek-V4.1-Flash >> data/run_{{lang}}.log 2>&1 &
     @echo "Started in the background. Watch: just tail {{lang}}   Stop: just stop {{lang}}"
 
-# Translate everything with DeepSeek only, in this window.
+# Translate everything with DeepSeek only, in this window. Waits out DeepSeek's peak hours.
 run-deepseek lang="kn":
-    ./runner.sh {{lang}} deepseek:deepseek-v4-flash
+    ./runner.sh {{lang}} deepseek:deepseek-flash
 
-# Translate the next unfinished book with DeepSeek, then stop.
+# Translate the next unfinished book with DeepSeek, then stop. Waits out DeepSeek's peak hours.
 next lang:
-    ./runner.sh {{lang}} deepseek:deepseek-v4-flash next
+    ./runner.sh {{lang}} deepseek:deepseek-flash next
 
-# Translate the next unfinished Kannada book with DeepSeek, then stop.
+# Translate the next unfinished Kannada book with DeepSeek, then stop. Waits out DeepSeek's peak hours.
 next-deepseek-kn:
-    ./runner.sh kn deepseek:deepseek-v4-flash next
+    ./runner.sh kn deepseek:deepseek-flash next
 
 # Translate the next unfinished Kannada book with Gemini, then stop.
 next-gemini-kn:

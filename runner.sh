@@ -144,7 +144,7 @@ source "$SCRIPT_DIR/.venv/bin/activate"
 # When no model is given we omit --model entirely so book_translator.py uses
 # its FALLBACK_MODEL_CHAIN (Gemini models, then DeepSeek, then OpenRouter).
 #
-# A "+" makes a relay: "claude:sonnet+deepseek:deepseek-v4-flash". The first
+# A "+" makes a relay: "claude:sonnet+deepseek:deepseek-flash". The first
 # model runs until its limit. The second then runs until the first one resets.
 PRIMARY_MODEL="${MODEL_NAME%%+*}"
 RELAY_MODEL=""

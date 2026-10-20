@@ -1,6 +1,7 @@
 import csv
 import types
 from datetime import datetime, timezone
+from typing import cast
 
 import pytest
 
@@ -21,7 +22,7 @@ def isolated_env(monkeypatch, tmp_path):
         if "_KEY_" in k:
             monkeypatch.delenv(k)
     monkeypatch.setenv("AI_KEY_STATE_FILE", str(tmp_path / "state.json"))
-    monkeypatch.setattr(ai.time, "sleep", lambda s: None)
+    monkeypatch.setattr(ai.time, "sleep", lambda _: None)
 
 
 def rows():
@@ -45,7 +46,7 @@ def test_azure_call_is_logged_with_cached_tokens(monkeypatch):
     monkeypatch.setenv("AZURE_KEY_1", "a1")
     usage = {"prompt_tokens": 1000, "completion_tokens": 50,
              "prompt_tokens_details": {"cached_tokens": 100}}
-    monkeypatch.setattr(ai.ai_openai_compat, "chat", lambda *a: ("ok", 200, "", usage))
+    monkeypatch.setattr(ai.ai_openai_compat, "chat", lambda *_: ("ok", 200, "", usage))
 
     assert ai.call_gemini(ai.make_rotator([]), "p", "s",
                           models=["azure:DeepSeek-V4.1-Flash"]) == "ok"
@@ -99,7 +100,7 @@ def test_record_appends_and_carries_all_time_total(capsys):
 def test_deepseek_call_is_logged_with_its_label(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_KEY_1", "d1")
     usage = {"prompt_cache_hit_tokens": 100, "prompt_cache_miss_tokens": 900, "completion_tokens": 50}
-    monkeypatch.setattr(ai.ai_openai_compat, "chat", lambda *a: ("ok", 200, "", usage))
+    monkeypatch.setattr(ai.ai_openai_compat, "chat", lambda *_: ("ok", 200, "", usage))
 
     assert ai.call_gemini(ai.make_rotator([]), "p", "s",
                           models=["deepseek:deepseek-v4-flash"], label="M-i p280-300") == "ok"
@@ -113,7 +114,7 @@ def test_billed_call_without_text_is_still_logged(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_KEY_1", "d1")
     usage = {"prompt_cache_miss_tokens": 900, "completion_tokens": 50}
     replies = [(None, 200, "no text", usage), ("ok", 200, "", usage)]
-    monkeypatch.setattr(ai.ai_openai_compat, "chat", lambda *a: replies.pop(0))
+    monkeypatch.setattr(ai.ai_openai_compat, "chat", lambda *_: replies.pop(0))
 
     ai.call_gemini(ai.make_rotator([]), "p", "s", models=["deepseek:deepseek-v4-flash"])
     assert len(rows()) == 2
@@ -126,9 +127,10 @@ def test_gemini_call_is_logged_with_thinking_counted_as_output(monkeypatch):
 
     class FakeClient:
         def __init__(self, api_key):
+            self.api_key = api_key
             self.models = self
 
-        def generate_content(self, **kw):
+        def generate_content(self, **_):
             return types.SimpleNamespace(text="ok", usage_metadata=md)
 
     import google.genai
@@ -146,9 +148,11 @@ def test_chat_returns_the_usage_report(monkeypatch):
     usage = {"prompt_cache_hit_tokens": 0, "prompt_cache_miss_tokens": 7, "completion_tokens": 12}
     body = {"choices": [{"message": {"content": "Hi!"}}], "usage": usage}
     resp = types.SimpleNamespace(status_code=200, text="", json=lambda: body)
-    monkeypatch.setattr(requests, "post", lambda *a, **k: resp)
+    posts = []
+    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: posts.append((args, kwargs)) or resp)
 
     assert ai.ai_openai_compat.chat("deepseek", "k", "m", "s", "p", 10, 5) == ("Hi!", 200, "", usage)
+    assert posts[0][0] == ("https://api.deepseek.com/chat/completions",)
 
 
 def test_openrouter_uses_its_reported_cost_and_tokens(capsys):
@@ -171,9 +175,9 @@ def test_damaged_ledger_does_not_raise(capsys):
 
 def test_tool_calls_carry_the_label(monkeypatch):
     seen = []
-    monkeypatch.setattr(ai, "call_gemini_with_tools", lambda *a, **k: seen.append(k["label"]) or "ok")
-    ai.call_ai_with_logging(rotator=None, prompt="p", book_id="Sv-i", chunk_id="p1-5",
-                            log_dir=str(costs.LEDGER.parent), tools=["t"], tool_executor=lambda *a: {})
+    monkeypatch.setattr(ai, "call_gemini_with_tools", lambda *_, **k: seen.append(k["label"]) or "ok")
+    ai.call_ai_with_logging(rotator=cast(ai.KeyRotator, None), prompt="p", book_id="Sv-i", chunk_id="p1-5",
+                            log_dir=str(costs.LEDGER.parent), tools=["t"], tool_executor=lambda *_: {})
     assert seen == ["Sv-i p1-5"]
 
 
@@ -183,3 +187,22 @@ def test_bad_or_missing_openrouter_cost_warns_and_logs_zero(capsys):
     out = capsys.readouterr().out
     assert "could not price" in out and "OpenRouter sent no cost" in out
     assert [r["usd"] for r in rows()] == ["0.000000", "0.000000"]
+
+
+def _utc(month, day, hour, minute=0, second=0):
+    return datetime(2026, month, day, hour, minute, second, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("t, expected", [
+    (_utc(9, 28, 7), _utc(9, 28, 10)),
+    (_utc(9, 28, 2, 30), _utc(9, 28, 4)),
+    (_utc(9, 28, 1), _utc(9, 28, 4)),  # the first minute of a peak window is peak
+    (_utc(9, 28, 6), _utc(9, 28, 10)),
+    (_utc(10, 2, 9, 59, 30), _utc(10, 2, 10)),
+    (_utc(9, 28, 4), _utc(9, 28, 4)),  # the end of a peak window is off-peak
+    (_utc(9, 28, 5), _utc(9, 28, 5)),
+    (_utc(9, 28, 12), _utc(9, 28, 12)),
+    (_utc(10, 3, 7), _utc(10, 3, 7)),  # Saturday
+])
+def test_off_peak_start(t, expected):
+    assert costs.off_peak_start(t) == expected

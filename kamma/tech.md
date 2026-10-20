@@ -11,8 +11,8 @@
   epitaka_app GitHub releases by `runner.sh`.
 - LLM providers: Gemini, DeepSeek and OpenRouter, one key rotation and one
   fallback model chain; non-Gemini models are written `provider:model`.
-- Linux desktop; long runs go through `runner.sh`, usually via `just run-deepseek <lang>` (`just run` is the Claude background run)
-  (DeepSeek pinned); `just next <lang>` (plus the `next-deepseek-kn` and `next-gemini-kn` shortcuts) does only the next unfinished book;
+- Linux desktop; long runs go through `runner.sh`, usually via `just run-deepseek <lang>` (`just run` is the background relay: Claude, then DeepSeek V4.1 Flash on Azure)
+  (DeepSeek pinned, waits out DeepSeek's peak hours); `just next <lang>` (plus the `next-deepseek-kn` and `next-gemini-kn` shortcuts) does only the next unfinished book;
   `just export <lang>` writes one text file per finished sutta to `exports/<lang>/`;
   `just upload <lang>` sends new ones to Google Drive as Google Docs.
 - Long runs happen on a server: SSH alias `epitaka` (`root@187.126.118.33`,
@@ -33,6 +33,24 @@ users mostly translate other languages, so Hindi-only costs (the
 
 ## Constraints
 - Paid API use (DeepSeek, OpenRouter) is fine when it gets the job done.
+- 2026-10-20: a run pinned to a `deepseek:` model sleeps through DeepSeek's
+  peak hours (01:00-04:00 and 06:00-10:00 UTC, Monday-Friday; price page read
+  2026-10-20) and carries on at off-peak, which costs half. The rule is UTC
+  only. User, 2026-10-20: "the server might be running on some different time
+  zone, so it needs to be universal". There is no override (the user's
+  choice). The clock is checked right before every request, so a split and a
+  retry wait too; a request already on its way finishes. Azure, Gemini,
+  Claude, the fallback chain and `--dry-run` never wait. Chinese public
+  holidays count as peak.
+- 2026-10-20: the direct DeepSeek API is called as `deepseek:deepseek-flash`.
+  The name has no version number and DeepSeek points it at its newest Flash
+  model (change log 2026-10-17: "simply use deepseek-flash to access the latest
+  model"), so it needs no update. The old `deepseek-v4-flash` is only routed
+  for now (change log 2026-09-10) and is not used. User, 2026-10-20: "make
+  sure that azure does not get changed. I don't think it has that latest
+  model". So `azure:DeepSeek-V4.1-Flash` stays as it is: it is the deployment
+  owner's name and version. `src/common/ai_client_bai.py` is a third provider
+  (B.AI) with its own model names and is not touched.
 - API keys live only in `.env`, which is never committed and never edited by
   the agent. `.env.example` documents every new variable.
 - Prompts are big (up to about 200k tokens). Every provider must accept that
@@ -48,8 +66,17 @@ users mostly translate other languages, so Hindi-only costs (the
 ## Testing
 - pytest tests for new code only (for example key loading and provider
   choice), with faked API responses.
-- Existing code has no tests, and this fork does not add tests for it.
+- Existing code had no tests and this fork did not add tests for it. Since
+  2026-10-20 (user: "Fix all warnings that you come across. Fix all problems.")
+  a bug fix or a cleanup that touches old code gets a test too, as for
+  `call_gemini_with_tools`, `_unanswered` and the parallel-translation reader.
 - Check live behaviour with `--dry-run`, then a short `--max-parts 1` run.
+- Type check: `[tool.pyright]` in `pyproject.toml` points Pyright at `.venv`.
+  Pyright is not a dev dependency; run it from the dpd-db environment:
+  `cd <repo> && /home/bodhirasa/MyFiles/3_Active/dpd-db/.venv/bin/pyright src tests`
+  (0 errors on 2026-10-20). An editor must restart its Pyright to read the
+  setting. The one pytest `filterwarnings` entry hides only `ast.Str is
+  deprecated`, which comes from the pinned `aksharamukha 2.3`.
 
 ## What the output looks like
 - `data/epitaka_<lang>.db` (sentences, translation_remarks) and

@@ -43,7 +43,10 @@ def _to_script(text: str, script: str | None) -> str:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", SyntaxWarning)  # noisy on first import
         from aksharamukha import transliterate
-    return _ascii_digits(transliterate.process("IASTPali", script, text))
+    out = transliterate.process("IASTPali", script, text)
+    if out is None:
+        raise ValueError(f"aksharamukha returned nothing for script {script!r}")
+    return _ascii_digits(out)
 
 
 def _read(path: str, sql: str, args: tuple) -> list[tuple]:
@@ -53,7 +56,7 @@ def _read(path: str, sql: str, args: tuple) -> list[tuple]:
 
 def _paragraphs(rows: list[tuple]) -> dict[int, str]:
     paras: dict[int, list[str]] = defaultdict(list)
-    for para_id, _line_id, text in rows:
+    for para_id, _, text in rows:
         if text:
             paras[para_id].append(_TAG.sub("", text).strip())
     return {p: " ".join(lines) for p, lines in paras.items()}
@@ -128,7 +131,7 @@ def export_suttas(epitaka_db: str, lang: str, out_dir: str,
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").strip().partition("\n")[0])
     ap.add_argument("--lang", required=True, help='Translation language code, e.g. "kn".')
     ap.add_argument("--book", help='Book id, e.g. "M-i" (default: one file per finished sutta, see --out-dir).')
     ap.add_argument("--start", type=int, default=0, help="First para_id (default: book start).")

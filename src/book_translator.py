@@ -87,11 +87,13 @@ import sys
 import time
 import types
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 
 import common.common_utils as cu
 import common.ai_client as ai
+import common.costs as costs
 
 load_dotenv()
 
@@ -148,7 +150,7 @@ FALLBACK_MODEL_CHAIN = [
     "gemini-3.5-flash",
     "gemini-3.1-pro-preview",
     "gemini-3-flash-preview",
-    "deepseek:deepseek-v4-flash",
+    "deepseek:deepseek-flash",
     "openrouter:stealth/space-bunny-alpha",
 ]
 
@@ -224,23 +226,22 @@ else:
 
 if "database" not in sys.modules:
     _db_mod = types.ModuleType("database")
-    _db_mod.get_glossary_conn = lambda: sqlite3.connect(_RESOLVED_GLOSSARY_DB, timeout=30)
+    setattr(_db_mod, "get_glossary_conn", lambda: sqlite3.connect(_RESOLVED_GLOSSARY_DB, timeout=30))
     sys.modules["database"] = _db_mod
 else:
     # Module already present (e.g. re-imported) — still make sure it points
     # at the language-specific glossary DB rather than whatever it had before.
-    sys.modules["database"].get_glossary_conn = lambda: sqlite3.connect(_RESOLVED_GLOSSARY_DB, timeout=30)
+    setattr(sys.modules["database"], "get_glossary_conn", lambda: sqlite3.connect(_RESOLVED_GLOSSARY_DB, timeout=30))
 
 if "config" not in sys.modules:
     _cfg_mod = types.ModuleType("config")
-    _cfg_mod.EPITAKA_DB  = _early_epitaka_db
-    _cfg_mod.SC_DATA_DB  = ""
+    setattr(_cfg_mod, "EPITAKA_DB", _early_epitaka_db)
+    setattr(_cfg_mod, "SC_DATA_DB", "")
     sys.modules["config"] = _cfg_mod
 else:
-    sys.modules["config"].EPITAKA_DB = _early_epitaka_db
+    setattr(sys.modules["config"], "EPITAKA_DB", _early_epitaka_db)
 
 from common.context_builders import (  # noqa: E402
-    GlossaryContext,
     GlossaryContextStemmed,
     CommentaryContext,
     PaliDefsContext,
@@ -248,9 +249,6 @@ from common.context_builders import (  # noqa: E402
     MulaAtthaContext,
     NissayaContext,
     ParallelTranslationContext,
-    TranslationWriter,
-    GlossaryWriter,
-    RemarkWriter,
 )
 
 
@@ -384,7 +382,7 @@ def build_sections_from_headings(
     if para_end == -1:
         para_end = book_max
 
-    boundaries = [h["para_id"] for h in headings if para_start <= h["para_id"] <= para_end]
+    boundaries: list[int] = [h["para_id"] for h in headings if para_start <= h["para_id"] <= para_end]
     if not boundaries or boundaries[0] > para_start:
         boundaries.insert(0, para_start)
     boundaries.append(para_end + 1)
@@ -576,9 +574,12 @@ def _unanswered(chunk: list[dict], translations: list[dict]) -> list[dict]:
     for t in translations:
         if not (t.get("translation") or "").strip():
             continue
+        para_id, line_id = t.get("para_id"), t.get("line_id")
+        if para_id is None or line_id is None:
+            continue
         try:
             # The model may send ids as text ("3"); SQLite saves those fine.
-            answered.add((int(t.get("para_id")), int(t.get("line_id"))))
+            answered.add((int(para_id), int(line_id)))
         except (TypeError, ValueError):
             pass
     left = []
@@ -1023,6 +1024,32 @@ def stop_due(args) -> bool:
     return stop_at > 0 and time.time() >= stop_at
 
 
+def wait_for_off_peak(args) -> bool:
+    """DeepSeek charges double at peak: sleep until off-peak. False when --stop-at came first."""
+    if getattr(args, "dry_run", False) or not (getattr(args, "model", None) or "").startswith("deepseek:"):
+        return True
+    now = datetime.fromtimestamp(time.time(), timezone.utc)
+    if not costs.is_peak(now):
+        return True
+    if stop_due(args):
+        return False
+    # flush: without python -u a run piped to a log would look hung for hours.
+    print(f"[PEAK] DeepSeek peak hours (01:00-04:00 and 06:00-10:00 UTC, Mon-Fri). "
+          f"Waiting until {costs.off_peak_start(now):%Y-%m-%d %H:%M} UTC.", flush=True)
+    while not stop_due(args):
+        t = time.time()
+        now = datetime.fromtimestamp(t, timezone.utc)
+        if not costs.is_peak(now):
+            return True
+        pause = min(300, (costs.off_peak_start(now) - now).total_seconds())
+        stop_at = getattr(args, "stop_at", 0)
+        if stop_at > 0:
+            pause = min(pause, stop_at - t)
+        # Re-read the clock every slice so the wait follows the wall clock.
+        time.sleep(max(0.0, pause))
+    return False
+
+
 def process_book(
     book_id:        str,
     args,
@@ -1031,9 +1058,6 @@ def process_book(
     lang_db:        str,
     glossary_db:    str,
     system_prompt:  str,
-    translation_writer,
-    glossary_writer,
-    remark_writer,
     models:         list[str] | None = None,
 ) -> tuple[int, int, int]:
     """Translate one book. Returns (sentences_updated, glossary_added, remarks_saved)."""
@@ -1224,6 +1248,11 @@ def process_book(
                 print(f"  [dry-run] {n_sentences} sentence(s) would be sent.")
                 return 0, 0, 0
 
+            # Checked here, right before the request, so building the prompt, a split and a
+            # retry for missing lines are all covered. Every reply is saved before the next call.
+            if not wait_for_off_peak(args):
+                return 0, 0, 0
+
             raw = ai.call_ai_with_logging(
                 rotator       = rotator,
                 prompt        = prompt,
@@ -1299,7 +1328,7 @@ def process_book(
 
             return saved_trans, saved_gloss, saved_rem
 
-        for c_idx, chunk in enumerate(chunks, 1):
+        for chunk in chunks:
             if stop_due(args):
                 break
             u, g, r = _handle_chunk(chunk)
@@ -1574,7 +1603,7 @@ def main() -> int:
                         help="Override path to glossary_<lang>.db (default: auto-derived next to epitaka.db).")
     parser.add_argument("--model",          default=None,
                         help="Single model to use (e.g. gemini-3.8-flash, "
-                             "deepseek:deepseek-v4-flash, openrouter:<model-id>). "
+                             "deepseek:deepseek-flash, openrouter:<model-id>). "
                              "If omitted, the FALLBACK_MODEL_CHAIN is tried in order, "
                              "falling over to the next model when one is rate-limited.")
     parser.add_argument("--api-keys",       default="")
@@ -1607,8 +1636,8 @@ def main() -> int:
     # belt-and-suspenders: _RESOLVED_GLOSSARY_DB above is what the lambda
     # actually reads, but we also keep this attribute override for any code
     # that calls database.get_glossary_conn() via module-attribute lookup.)
-    sys.modules["config"].EPITAKA_DB = epitaka_db
-    sys.modules["database"].get_glossary_conn = lambda: sqlite3.connect(glossary_db, timeout=30)
+    setattr(sys.modules["config"], "EPITAKA_DB", epitaka_db)
+    setattr(sys.modules["database"], "get_glossary_conn", lambda: sqlite3.connect(glossary_db, timeout=30))
 
     lang_name = cu.lang_name(args.lang)
     print(f"[lang] Language   : {args.lang}  ({lang_name})")
@@ -1674,11 +1703,6 @@ def main() -> int:
                   f"set {provider.upper()}_KEY_1 in .env.")
             return 1
 
-    params = {"epitaka_db": epitaka_db, "lang_db": lang_db, "glossary_db": glossary_db}
-    translation_writer = TranslationWriter(params, log_info=print, log_warn=print, log_error=print)
-    glossary_writer    = GlossaryWriter(params, log_info=print, log_warn=print, log_error=print)
-    remark_writer      = RemarkWriter(params, log_info=print, log_warn=print, log_error=print)
-
     grand_sentences = 0
     grand_glossary  = 0
     grand_remarks   = 0
@@ -1699,9 +1723,6 @@ def main() -> int:
                 lang_db            = lang_db,
                 glossary_db        = glossary_db,
                 system_prompt      = system_prompt,
-                translation_writer = translation_writer,
-                glossary_writer    = glossary_writer,
-                remark_writer      = remark_writer,
                 models             = models,
             )
         except Exception as exc:

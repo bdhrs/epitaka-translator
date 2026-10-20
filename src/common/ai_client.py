@@ -65,6 +65,7 @@ import types
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from typing import Any, Callable, NoReturn
 
 from . import ai_claude_code, ai_openai_compat
 from . import costs
@@ -183,7 +184,7 @@ def _is_rate_limit(exc: Exception) -> bool:
 
 def split_model(model: str) -> tuple[str, str]:
     """
-    "deepseek:deepseek-v4-flash" -> ("deepseek", "deepseek-v4-flash").
+    "deepseek:deepseek-flash" -> ("deepseek", "deepseek-flash").
     A bare name is a Gemini model. Only the first colon splits, and only for a
     known provider, because OpenRouter ids can contain colons ("x/y:free").
     """
@@ -617,7 +618,7 @@ class ModelPool:
         )
 
 
-def _fatal_all_keys_exhausted() -> None:
+def _fatal_all_keys_exhausted() -> NoReturn:
     """Alert and exit when every configured key has been permanently removed."""
     reset = ai_claude_code.last_reset
     if reset and reset > datetime.now(timezone.utc):
@@ -635,12 +636,12 @@ def _generate_with_retry(
     rotator:           KeyRotator,
     pool:              ModelPool,
     contents:          list,
-    config:            object,
+    config:            Any,
     estimated_tokens:  int,
-    timeout:           int,
+    timeout:           float,
     label:             str = "",
     lines:             int = 0,
-) -> tuple[object | None, str | None, str | None]:
+) -> tuple[Any, str | None, str | None]:
     """
     One Gemini generateContent request with the standard retry/backoff loop:
     acquire a throttled key for the pool's current model, run the call in a
@@ -820,7 +821,7 @@ def call_gemini(
     model:              str | None = None,
     models:             list[str] | None = None,
     max_output_tokens:  int = 65_536,
-    timeout:            int = 300,
+    timeout:            float = 300,
     used_model:         list | None = None,
     label:              str = "",
     lines:              int = 0,
@@ -881,11 +882,11 @@ def call_gemini_with_tools(
     model:             str | None = None,
     models:            list[str] | None = None,
     tools:             list | None = None,
-    tool_executor=None,  # callable (name, args_dict) -> dict (JSON-serialisable response)
+    tool_executor: Callable[[str, dict], Any] | None = None,  # callable (name, args_dict) -> dict (JSON-serialisable response)
     max_output_tokens: int = 65_536,
-    timeout:           int = 300,
+    timeout:           float = 300,
     max_rounds:        int = 12,
-    log:               callable = lambda msg: None,
+    log:               Callable[[str], object] = lambda _: None,
     used_model:        list | None = None,
     label:             str = "",
     lines:             int = 0,
@@ -919,7 +920,8 @@ def call_gemini_with_tools(
 
     pool = ModelPool(models if models else ([model] if model else []))
     if pool.current() is None:
-        log.error("[AI] call_gemini_with_tools called with no usable models.")
+        # `log` is the callable parameter here, so the module logger is fetched by name.
+        logging.getLogger(__name__).error("[AI] call_gemini_with_tools called with no usable models.")
         return None
 
     contents = [genai_types.Content(
@@ -998,6 +1000,8 @@ def call_gemini_with_tools(
                     ) for fc in fcs
                 ]
             contents.append(genai_types.Content(role="model", parts=model_parts))
+            if tool_executor is None:
+                raise TypeError("the model called a tool but no tool_executor was given")
             tool_parts = []
             for fc in fcs:
                 out = tool_executor(fc.name, dict(fc.args or {}))
@@ -1016,10 +1020,8 @@ def call_gemini_with_tools(
             if used_model is not None and model_used:
                 used_model.append(model_used)
             return text
-        finish = getattr(
-            getattr(getattr(response, "candidates", [None])[0] or None,
-                    "finish_reason", None), None, None,
-        )
+        first_candidate = (getattr(response, "candidates", None) or [None])[0]
+        finish = getattr(first_candidate, "finish_reason", None)
         log(f"[tools] round {tool_rounds + 1}: no text and no function calls "
             f"(finish_reason={finish}). Stopping.")
         return None

@@ -9,12 +9,12 @@ def isolated_env(monkeypatch, tmp_path):
         if "_KEY_" in k:
             monkeypatch.delenv(k)
     monkeypatch.setenv("AI_KEY_STATE_FILE", str(tmp_path / "state.json"))
-    monkeypatch.setattr(ai.time, "sleep", lambda s: None)
+    monkeypatch.setattr(ai.time, "sleep", lambda _: None)
 
 
 def fake_chat(replies, calls):
     """replies: list of (text, status, error), consumed per call."""
-    def _chat(provider, key, model, system_prompt, prompt, max_tokens, timeout):
+    def _chat(provider, key, model, system_prompt, prompt, *_):  # the real call also gets max_tokens, timeout
         calls.append((provider, key, model, system_prompt, prompt))
         text, status, err = replies.pop(0)
         return text, status, err, {}
@@ -90,9 +90,9 @@ def test_missing_provider_key_is_logged_by_name(monkeypatch, caplog):
 
 
 @pytest.mark.parametrize("env, model", [
-    ({"DEEPSEEK_KEY_1": "d1"}, "deepseek:deepseek-v4-flash"),
+    ({"DEEPSEEK_KEY_1": "d1"}, "deepseek:deepseek-flash"),
     ({"OPENROUTER_KEY_1": "o1"}, "openrouter:stealth/space-bunny-alpha"),
-    ({"DEEPSEEK_KEY_1": "d1", "OPENROUTER_KEY_1": "o1"}, "deepseek:deepseek-v4-flash"),
+    ({"DEEPSEEK_KEY_1": "d1", "OPENROUTER_KEY_1": "o1"}, "deepseek:deepseek-flash"),
 ])
 def test_default_chain_survives_missing_providers(monkeypatch, env, model):
     import sys
@@ -104,7 +104,7 @@ def test_default_chain_survives_missing_providers(monkeypatch, env, model):
     calls = []
     monkeypatch.setattr(ai.ai_openai_compat, "chat", fake_chat([("ok", 200, "")], calls))
 
-    def no_gemini(*a, **k):
+    def no_gemini():
         raise AssertionError("run must not end as all-keys-exhausted")
     monkeypatch.setattr(ai, "_fatal_all_keys_exhausted", no_gemini)
 

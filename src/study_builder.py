@@ -123,15 +123,15 @@ if "database" not in sys.modules:
     # Study material only reads; the glossary connector is unused here but
     # must exist. Point it at the real per-language file (English), never at
     # a bare glossary.db.
-    _db_mod.get_glossary_conn = lambda: sqlite3.connect(
+    setattr(_db_mod, "get_glossary_conn", lambda: sqlite3.connect(
         cu.glossary_db_path(EPITAKA_DB, "en"), timeout=30
-    )
+    ))
     sys.modules["database"] = _db_mod
 
 if "config" not in sys.modules:
     _cfg_mod = types.ModuleType("config")
-    _cfg_mod.EPITAKA_DB = EPITAKA_DB
-    _cfg_mod.SC_DATA_DB = ""
+    setattr(_cfg_mod, "EPITAKA_DB", EPITAKA_DB)
+    setattr(_cfg_mod, "SC_DATA_DB", "")
     sys.modules["config"] = _cfg_mod
 
 from common.context_builders import PaliDefsContext  # noqa: E402
@@ -396,7 +396,7 @@ def build_pali_defs_block(params: dict, pali_text: str) -> str:
     """Rare-word definitions for the section, capped (10 words / 5 defs / 100 words)."""
     ctx = PaliDefsContext(
         params, pali_text=pali_text, max_words=MAX_PALI_WORDS,
-        log_info=lambda *a, **k: None, log_warn=print,
+        log_warn=print,
     )
     raw = ctx.build()
     if "(no " in raw or "(word definitions unavailable)" in raw:
@@ -550,17 +550,6 @@ def make_tool_executor(
     blows the context window. Books outside `allowed_books` are rejected.
     """
     allowed = set(allowed_books)
-    book_names: dict[str, str] = {}
-
-    def _book_name(book_id: str) -> str:
-        if book_id not in book_names:
-            with _connect(epitaka_db) as conn:
-                row = conn.execute(
-                    "SELECT book_name FROM books WHERE book_id=?", (book_id,),
-                ).fetchone()
-            book_names[book_id] = (row["book_name"] if row and row["book_name"]
-                                   else book_id)
-        return book_names[book_id]
 
     def execute(name: str, args: dict) -> dict:
         if name != "get_text_range":

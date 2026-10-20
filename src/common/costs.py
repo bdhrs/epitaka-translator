@@ -8,7 +8,7 @@ _gemini_price; a model without a price is logged at $0 with a warning.
 
 import csv
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import common_utils as cu
@@ -47,6 +47,16 @@ _all_time: float | None = None
 def is_peak(t: datetime) -> bool:
     """DeepSeek peak: 01:00-04:00 and 06:00-10:00 UTC, Monday-Friday (Chinese holidays ignored)."""
     return t.weekday() < 5 and (1 <= t.hour < 4 or 6 <= t.hour < 10)
+
+
+def off_peak_start(t: datetime) -> datetime:
+    """First moment at or after t that is off-peak (t in UTC, as is_peak expects)."""
+    if not is_peak(t):
+        return t
+    t = t.replace(minute=0, second=0, microsecond=0)
+    while is_peak(t):
+        t += timedelta(hours=1)
+    return t
 
 
 def _gemini_price(model: str, prompt_tokens: int, t: datetime) -> tuple[float, float, float] | None:

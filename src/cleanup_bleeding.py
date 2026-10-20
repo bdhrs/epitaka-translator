@@ -84,7 +84,7 @@ def _sql_regexp_available(conn: sqlite3.Connection) -> bool:
         return False
 
 
-def _scan_table(conn: sqlite3.Connection, sql: str, params: tuple, lang: str,
+def _scan_table(conn: sqlite3.Connection, sql: str, params: tuple | dict, lang: str,
                  text_field: str, table_desc: str):
     """
     Stream rows via a raw cursor with small server-side batches (NOT
@@ -227,7 +227,7 @@ def main():
         conn = sqlite3.connect(glossary_db)
         _low_memory_pragmas(conn)
         try:
-            ids = [(row["id"],) for row, _reason in bad_gloss]
+            ids = [(row["id"],) for row, _ in bad_gloss]
             for batch in _batched(ids, _WRITE_BATCH):
                 conn.executemany("DELETE FROM glossary WHERE id=?", batch)
                 conn.commit()   # commit each batch, not one giant transaction
@@ -239,7 +239,7 @@ def main():
         conn = sqlite3.connect(lang_db)
         _low_memory_pragmas(conn)
         try:
-            keys = [(row["book_id"], row["para_id"], row["line_id"]) for row, _reason in bad_sent]
+            keys = [(row["book_id"], row["para_id"], row["line_id"]) for row, _ in bad_sent]
             for batch in _batched(keys, _WRITE_BATCH):
                 conn.executemany(
                     "UPDATE sentences SET translation=NULL, translation_confidence=NULL, "

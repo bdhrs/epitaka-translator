@@ -1,5 +1,7 @@
 import sqlite3
 
+import pytest
+
 import export_text
 
 
@@ -140,3 +142,12 @@ def test_a_missing_sentence_holds_back_the_sutta_but_bare_punctuation_does_not(t
 
     assert export_text.export_suttas(str(src), "kn", str(out)) == (1, ["dn2: 1 of 2 lines"])
     assert sorted(p.name for p in out.iterdir()) == ["kn_dn1.txt"]
+
+
+def test_a_transliterator_that_returns_nothing_is_an_error(monkeypatch):
+    import aksharamukha.transliterate as transliterate
+
+    monkeypatch.setattr(transliterate, "process", lambda *_: None)
+
+    with pytest.raises(ValueError, match="returned nothing"):
+        export_text._to_script("evaṃ", "Kannada")

@@ -8,10 +8,10 @@ import re
 import sqlite3
 import logging
 from abc import ABC, abstractmethod
-from typing import Callable
+from pathlib import Path
+from typing import Callable, Collection
 
 from .common_utils import connect as _connect
-from .common_utils import ensure_glossary_db as _ensure_glossary_db
 from . import common_utils as _cu
 
 logger = logging.getLogger(__name__)
@@ -123,7 +123,6 @@ _REF_DB_FILENAME = "epitaka_en.db"
 
 def _ref_db_path(params: dict) -> str:
     """Path to the English reference translations DB, sitting next to epitaka.db."""
-    from pathlib import Path
     return str(Path(_epitaka_path(params)).parent / _REF_DB_FILENAME)
 
 
@@ -139,7 +138,6 @@ _NISSAYA_DB_FILENAME = "epitaka_my_nissaya.db"
 
 def _nissaya_db_path(params: dict) -> str:
     """Path to the DB holding the `nissaya` table, sitting next to epitaka.db."""
-    from pathlib import Path
     override = params.get("nissaya_db")
     if override:
         return str(override)
@@ -148,7 +146,6 @@ def _nissaya_db_path(params: dict) -> str:
 
 def _fetch_ref_translations(params: dict, triples: list[tuple[str, int, int]]) -> dict[tuple[str, int, int], str]:
     """Same as _fetch_lang_translations but reads from epitaka_en_ref.db instead of epitaka_<lang>.db."""
-    from pathlib import Path
     ref_db = _ref_db_path(params)
     if not ref_db or not triples or not Path(ref_db).exists():
         return {}
@@ -175,7 +172,6 @@ def _fetch_ref_translations(params: dict, triples: list[tuple[str, int, int]]) -
 
 def _fetch_ref_translations_range(params: dict, book_id: str, para_lo: int, para_hi: int) -> dict[tuple[int, int], str]:
     """Same as _fetch_lang_translations_range but reads from epitaka_en_ref.db."""
-    from pathlib import Path
     ref_db = _ref_db_path(params)
     if not ref_db or not Path(ref_db).exists():
         return {}
@@ -358,7 +354,6 @@ class NissayaContext(ContextBlock):
         if not self._paragraphs:
             return self._wrap("(no nissaya available)")
 
-        from pathlib import Path
         path = _nissaya_db_path(self.params)
         if not Path(path).exists():
             self.log_warn(f"[NissayaContext] Nissaya DB not found at {path}; skipping.")
@@ -373,9 +368,7 @@ class NissayaContext(ContextBlock):
                 book_id  = para["book_id"]
                 pid      = para["para_id"]
 
-                t_niss0 = time.perf_counter()
                 niss_map = self._fetch_nissaya_map(conn, book_id, pid)
-                # print(f"[DEBUG NissayaContext] nissaya fetch para={pid}: {time.perf_counter()-t_niss0:.3f}s  ({len(niss_map)} rows)")
 
                 # Skip paragraph entirely if no nissaya content exists for it
                 if not niss_map:
@@ -520,8 +513,6 @@ class GlossaryContext(ContextBlock):
                 print(f"[DEBUG GlossaryContext] glossary DB connect: {time.perf_counter()-t1:.3f}s")
                 t2 = time.perf_counter()
                 placeholders = ",".join("?" * len(ngrams))
-                # Support both old schema (english) and new schema (translation)
-                cols = [r[1] for r in conn.execute("PRAGMA table_info(glossary)").fetchall()]
                 rows = conn.execute(
                     f"SELECT pali, translation AS translation, context FROM glossary "
                     f"WHERE pali IN ({placeholders})",
@@ -1615,7 +1606,7 @@ class ParallelTranslationContext(ContextBlock):
         *,
         line_ids:   list[tuple[int, int]] | None = None,
         db_dir:     str | None        = None,
-        only_langs: list[str] | None  = None,
+        only_langs: Collection[str] | None  = None,
         log_info:   _Log = _noop,
         log_warn:   _Log = _noop,
     ):
@@ -1643,7 +1634,6 @@ class ParallelTranslationContext(ContextBlock):
     # ── helpers ──────────────────────────────────────────────────────────────
 
     def _data_dir(self) -> "Path":
-        from pathlib import Path
         if self._db_dir:
             return Path(self._db_dir)
         nissaya = Path(_epitaka_path(self.params))
@@ -1651,7 +1641,6 @@ class ParallelTranslationContext(ContextBlock):
 
     def _discover_dbs(self) -> list[tuple[str, "Path"]]:
         """Return [(filename, full_path), …] for every epitaka_*.db in the folder."""
-        from pathlib import Path
         data_dir = self._data_dir()
         found: list[tuple[str, Path]] = []
         for p in sorted(data_dir.glob("epitaka_*.db")):
@@ -1722,6 +1711,7 @@ class ParallelTranslationContext(ContextBlock):
                 return [dict(r) for r in rows]
         except Exception as exc:
             # Non-fatal: log and skip this DB
+            self.log_warn(f"[ParallelTranslationContext] Could not read {path}: {exc}")
             return []
 
     # ── build ─────────────────────────────────────────────────────────────────
@@ -1817,67 +1807,7 @@ class TranslationWriter:
 
 
 # ══════════════════════════════════════════════════════════════════
-# 9. GlossaryWriter
-# ══════════════════════════════════════════════════════════════════
-
-class GlossaryWriter:
-    def __init__(self, params: dict, log_info: _Log = _noop,
-                 log_warn: _Log = _noop, log_error: _Log = _noop):
-        self.params    = params
-        self.log_info  = log_info
-        self.log_warn  = log_warn
-        self.log_error = log_error
-
-    def upsert(self, terms: list[dict], sc_id: str = "") -> int:
-        required = {"pali", "translation"}
-        inserted = 0
-
-        glossary_db = _glossary_db_path(self.params)
-        if not glossary_db:
-            self.log_warn("[GlossaryWriter] No glossary_db configured — skipping save.")
-            return 0
-
-        try:
-            _ensure_glossary_db(glossary_db)
-        except Exception as exc:
-            self.log_warn(f"[GlossaryWriter] Cannot open glossary DB: {exc}")
-            return 0
-
-        with _connect(glossary_db) as conn:
-            for term in terms:
-                if not required.issubset(term):
-                    self.log_warn(f"[GlossaryWriter] Skipping bad entry: {term}")
-                    continue
-                pali    = str(term.get("pali",    "")).strip()
-                translation = str(term.get("translation", "")).strip()
-                if not pali or not translation:
-                    continue
-                try:
-                    conn.execute(
-                        "INSERT INTO glossary "
-                        "(pali, translation, domain, sub_domain, context, note, source_id) "
-                        "VALUES (?,?,?,?,?,?,?) "
-                        "ON CONFLICT(pali, translation) DO NOTHING",
-                        (
-                            pali, translation,
-                            str(term.get("domain",     "") or ""),
-                            str(term.get("sub_domain", "") or ""),
-                            str(term.get("context",    "") or ""),
-                            str(term.get("note",       "") or ""),
-                            sc_id,
-                        ),
-                    )
-                    inserted += conn.execute("SELECT changes()").fetchone()[0]
-                except Exception as exc:
-                    self.log_error(f"[GlossaryWriter] Insert error for '{pali}': {exc}")
-            conn.commit()
-
-        self.log_info(f"[GlossaryWriter] {inserted} new term(s) inserted (sc_id={sc_id!r}).")
-        return inserted
-
-
-# ══════════════════════════════════════════════════════════════════
-# 10. RemarkWriter
+# 9. RemarkWriter
 # ══════════════════════════════════════════════════════════════════
 
 class RemarkWriter:

@@ -35,16 +35,21 @@ just compare-models   # run one section on three Gemini models, results in data/
 just pull             # copy the server's data/ folder here (overwrites local copies)
 ```
 
-- `just run [lang]` is `just run-claude`: it starts `./runner.sh <lang> claude:sonnet`
-  in the background (the language defaults to `kn`) and appends to
-  `data/run_<lang>.log`. Watch it with `just tail`, stop it with `just stop`.
-  When the Claude limit hits, it waits until 5 h after the run started.
-- `just run-deepseek <lang>` runs `./runner.sh <lang> deepseek:deepseek-v4-flash`
+- `just run [lang]` starts the relay in the background (the language defaults to
+  `kn`): `./runner.sh <lang> claude:sonnet+azure:DeepSeek-V4.1-Flash`. Claude
+  Sonnet works until its limit hits, then DeepSeek V4.1 Flash on Azure takes over
+  until Claude resets. It appends to `data/run_<lang>.log` and then follows the
+  log (Ctrl+C stops watching, not the run). Stop the run with `just stop`.
+  `just relay` starts it without following the log. `just run-claude` runs
+  Claude alone (`./runner.sh <lang> claude:sonnet`); when its limit hits, it
+  waits until 5 h after the run started.
+- `just run-deepseek <lang>` runs `./runner.sh <lang> deepseek:deepseek-flash`
   in the foreground: it works through the preset book order (Dīgha Nikāya
   first), skips lines already translated, prints progress and `[cost]` lines as
   it goes, and keeps looping until everything is done (sleeping 3 h whenever
   the keys run out). Stop it with Ctrl+C and run it again later — it resumes
-  where it stopped.
+  where it stopped. In DeepSeek's peak hours it sleeps (see "DeepSeek and
+  OpenRouter" below), so almost all of its calls cost the half price.
 - `just next <lang>` does the same for one book only: the first book in the
   preset order that still has untranslated lines. It stops when that book is
   done, so run it again for the book after.
@@ -348,7 +353,7 @@ DEEPSEEK_KEY_1="sk-..."
 OPENROUTER_KEY_1="sk-or-..."
 ```
 
-Name the model with a provider prefix — `deepseek:deepseek-v4-flash`,
+Name the model with a provider prefix — `deepseek:deepseek-flash`,
 `openrouter:stealth/space-bunny-alpha`; a bare name is a Gemini model. Each
 model only ever gets keys of its own provider. The fallback chain ends with
 these two models after the Gemini ones, so a run moves on to DeepSeek and
@@ -356,6 +361,25 @@ then OpenRouter when every Gemini model is used up. HTTP 401/402/403 from
 either provider removes that key (402 is DeepSeek's "insufficient balance").
 The calls go through `src/common/ai_openai_compat.py` (single-turn only; tool
 calling stays Gemini-only).
+
+A run pinned to a `deepseek:` model sleeps through DeepSeek's peak hours
+(01:00-04:00 and 06:00-10:00 UTC, Monday to Friday) and carries on when
+off-peak starts, which costs half. It prints a `[PEAK]` line with the UTC time
+it will carry on. The rule uses UTC only, so the machine's time zone does not
+matter. The clock is checked right before every request, so a split or a retry
+for missing lines waits too; a request already on its way finishes, even if
+peak starts meanwhile. The same holds when DeepSeek is the second model of a
+relay: it sleeps until off-peak or until the first model is back. Chinese
+public holidays count as peak. The fallback chain, Azure and `--dry-run` never
+wait. There is no override.
+
+Use `deepseek:deepseek-flash`. The name has no version number: DeepSeek points
+it at its newest Flash model, so it needs no update when a new version ships
+(DeepSeek change log, 2026-10-17). The old name `deepseek-v4-flash` still works
+only because DeepSeek routes it for now (change log, 2026-09-10), so do not use
+it. This is about DeepSeek's own API. An Azure model name belongs to whoever
+owns that deployment, and `src/common/ai_client_bai.py` talks to a different
+provider with its own model names.
 
 ### DeepSeek on Azure
 
@@ -381,7 +405,7 @@ the cost it reports per call; Gemini 3.8 flash, 3.7 flash and 3.1 pro are
 priced at Google's paid-tier rates (thinking counted as output, flash rates
 double on 2027-01-01), and any other Gemini model logs $0 with a warning. Chinese
 public holidays are off-peak for DeepSeek but are not detected, so those days
-are overstated.
+are overstated (a DeepSeek-pinned run also treats them as peak and waits).
 
 Each row also records how many sentences the call carried (`lines`), its
 outcome (`status`: ok / limit / error / timeout), its wall time (`seconds`),
