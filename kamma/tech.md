@@ -11,6 +11,15 @@
   epitaka_app GitHub releases by `runner.sh`.
 - LLM providers: Gemini, DeepSeek and OpenRouter, one key rotation and one
   fallback model chain; non-Gemini models are written `provider:model`.
+  2026-10-20: `src/verify_translation.py` (translation review) also runs
+  on this stack (`ai_client.py`): `--model` takes one model or a
+  comma-separated list, defaulting to the translator's fallback chain.
+  Its B.AI import is gone; `ai_client_bai.py` itself is untouched and
+  unused. The DeepSeek off-peak gate applies to review runs too, but
+  only to the first model in the list (a mid-run fallback switch is not
+  visible to the script). Review findings live in `translation_remarks`,
+  which is not deduped — snapshot the lang DB before re-running over the
+  same book.
 - Linux desktop; long runs go through `runner.sh`, usually via `just run-deepseek <lang>` (`just run` is the background relay: Claude, then DeepSeek V4.1 Flash on Azure)
   (DeepSeek pinned, waits out DeepSeek's peak hours); `just next <lang>` (plus the `next-deepseek-kn` and `next-gemini-kn` shortcuts) does only the next unfinished book;
   `just export <lang>` writes one text file per finished sutta to `exports/<lang>/`;

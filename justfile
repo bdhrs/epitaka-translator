@@ -23,6 +23,20 @@ relay lang="kn":
     nohup ./runner.sh {{lang}} claude:sonnet+azure:DeepSeek-V4.1-Flash >> data/run_{{lang}}.log 2>&1 &
     @echo "Started in the background. Watch: just tail {{lang}}   Stop: just stop {{lang}}"
 
+# Review translated books in the background (default: Kannada on Claude Sonnet).
+# Report-only by default — pass --apply yourself, and snapshot the lang DB
+# before re-running over the same book (translation_remarks is not deduped).
+# Extra flags pass through, e.g. just review kn claude:sonnet --book Khp --limit 1
+review lang="kn" model="claude:sonnet" *flags:
+    nohup uv run src/verify_translation.py --lang {{lang}} --model {{model}} {{flags}} >> data/review_{{lang}}.log 2>&1 &
+    @echo "Started in the background. Watch: tail -f data/review_{{lang}}.log"
+
+# Review every Kannada book with Claude Sonnet — full run, no limit, no --apply.
+review-kn-claude: (review "kn" "claude:sonnet")
+
+# Review every Kannada book with Azure DeepSeek V4.1 Flash — full run, no limit, no --apply.
+review-kn-azure: (review "kn" "azure:DeepSeek-V4.1-Flash")
+
 # Translate everything with DeepSeek only, in this window. Waits out DeepSeek's peak hours.
 run-deepseek lang="kn":
     ./runner.sh {{lang}} deepseek:deepseek-flash
@@ -94,11 +108,12 @@ stats period="day" lang="kn":
 usage percent reset="":
     uv run src/stats.py usage {{percent}} --reset "{{reset}}"
 
-# Stop the background run.
+# Stop the background run (also stops a background review started by `just review`).
 stop lang="kn":
     -pkill -f "[r]unner.sh {{lang}} "
     -pkill -f "[b]ook_translator.py --lang {{lang}} "
     -pkill -f "[c]laude -p --model .* --no-session-persistence .*TARGET LANGUAGE: "
+    -pkill -f "[v]erify_translation.py --lang {{lang}} "
     @echo "Stopped."
 
 # Translate the next unfinished book with Claude, then stop.

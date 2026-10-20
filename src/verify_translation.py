@@ -1,8 +1,9 @@
 """
 verify_translation.py — Verify existing translations against the Pāli
 source AND its linked texts (commentary / sub-commentary / mūla / sibling
-commentary, pulled via CommentaryContext), using the B.AI API
-(deepseek-v4-flash, single key — see ai_client_bai.py).
+commentary, pulled via CommentaryContext), using any model on the
+ai_client provider stack (Gemini / DeepSeek / OpenRouter / Azure / Claude
+— see common/ai_client.py; chosen with --model).
 
 Why CommentaryContext
 ----------------------
@@ -23,17 +24,23 @@ of that lookup.
 Usage
 -----
     # Dry run: print the prompt for the first chunk, don't call the AI
-    python verify_translation.py --lang th --book Sp-i --start 1 --end 40 --dry-run
+    uv run src/verify_translation.py --lang kn --book Sp-i --start 1 --end 40 --dry-run
 
-    # Verify a whole book. Findings are ALWAYS saved to translation_remarks
-    # (note="wrong"/"critical"); sentences.translation is left untouched:
-    python verify_translation.py --lang th --book Sp-i
+    # Verify a whole book with Claude Sonnet (subscription, no API charge).
+    # Findings are ALWAYS saved to translation_remarks; sentences.translation
+    # is left untouched:
+    uv run src/verify_translation.py --lang kn --book Sp-i --model claude:sonnet
+
+    # Same, but on DeepSeek's direct API (version-free name; waits out
+    # DeepSeek's peak hours before every request):
+    uv run src/verify_translation.py --lang kn --book Sp-i --model deepseek:deepseek-flash
 
     # Verify AND overwrite sentences.translation with the AI's corrections:
-    python verify_translation.py --lang th --book Sp-i --apply
+    uv run src/verify_translation.py --lang kn --book Sp-i --model claude:sonnet --apply
 
-    # Auto-discover every book that has translations in epitaka_th.db:
-    python verify_translation.py --lang th
+    # Auto-discover every book that has translations in epitaka_kn.db,
+    # on the default fallback chain:
+    uv run src/verify_translation.py --lang kn
 
 What it does, per chunk of paragraphs
 --------------------------------------
@@ -41,9 +48,10 @@ What it does, per chunk of paragraphs
      from epitaka.db / epitaka_<lang>.db.
   2. Builds the LINKED-TEXT context for that same paragraph range via
      CommentaryContext (forward + mūla + sibling).
-  3. Sends both to B.AI and asks it to flag lines whose translation
-     conflicts with the Pāli itself OR with the linked texts, returning a
-     corrected translation + a short explanation for each flagged line.
+  3. Sends both to the chosen model and asks it to flag lines whose
+     translation conflicts with the Pāli itself OR with the linked texts,
+     returning a corrected translation + a short explanation for each
+     flagged line.
   4. Saves every flagged line to `translation_remarks` via RemarkWriter.
   5. With --apply, flagged lines' `sentences.translation` is also
      overwritten with the AI's corrected text, via TranslationWriter.
@@ -53,44 +61,62 @@ File layout
 This script owns: paragraph chunking, the verification prompt, and the
 per-chunk save/apply flow. DB paths/schema/connection helpers live in
 common_utils.py. Linked-text lookup lives in context_builders.py
-(CommentaryContext / TranslationWriter / RemarkWriter). All B.AI calling
-and JSON-response parsing lives in ai_client_bai.py — change that file,
-not this one, if the AI-calling logic needs to change.
+(CommentaryContext / TranslationWriter / RemarkWriter). All AI calling,
+retries, key rotation and JSON-response parsing live in common/ai_client.py
+— change that file, not this one, if the AI-calling logic needs to change.
 """
 
 import argparse
 import os
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Support both `python -m ai_jobs.verify_translation` (package import, with
-# ai_client_bai.py / common_utils.py / context_builders.py in a `common/`
-# subpackage next to this file) and running this file directly as a script
-# (`python verify_translation.py`) from inside the ai_jobs directory.
+# the helpers in a `common/` subpackage next to this file) and running this
+# file directly as a script (`python verify_translation.py`) from inside
+# the src directory.
 try:
     from .common.common_utils import connect as _connect, lang_name as _lang_name
     from .common.context_builders import CommentaryContext, TranslationWriter, RemarkWriter
-    from .common import ai_client_bai as ai
+    from .common import ai_client as ai
+    from .common import costs
 except ImportError:
     # No parent package — this is the "attempted relative import with no
     # known parent package" case you get from `python verify_translation.py`
     # directly. Fall back to a plain absolute import of `common.*` instead;
     # this only works if `common/` sits right next to this file, i.e. you're
-    # running from inside ai_jobs/. sys.path[0] is normally already this
+    # running from inside src/. sys.path[0] is normally already this
     # file's directory when run as a script, but we add it explicitly to be
     # safe (e.g. if something else imports this module from elsewhere).
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from common.common_utils import connect as _connect, lang_name as _lang_name  # type: ignore
     from common.context_builders import CommentaryContext, TranslationWriter, RemarkWriter  # type: ignore
-    from common import ai_client_bai as ai  # type: ignore
+    from common import ai_client as ai  # type: ignore
+    from common import costs  # type: ignore
 
 EPITAKA_DB = os.environ.get("EPITAKA_DB", str(Path(__file__).resolve().parent.parent / "data" / "epitaka.db"))
 
-DEFAULT_CHUNK_PARAS            = 5     # paragraphs per B.AI call
-DEFAULT_MAX_CONTEXT_CHARS      = 4000   # budget passed to CommentaryContext
-DEFAULT_MAX_TOKENS             = 10000   # thinking + answer combined, per B.AI call
-DEFAULT_THINKING_BUDGET_TOKENS = 500   # cap on deepseek-v4-flash's reasoning tokens
-DEFAULT_LOG_DIR                = "/tmp/verify_translation_logs"
+DEFAULT_CHUNK_PARAS       = 5      # paragraphs per AI call
+DEFAULT_MAX_CONTEXT_CHARS = 4000   # budget passed to CommentaryContext
+DEFAULT_LOG_DIR           = "/tmp/verify_translation_logs"
+
+# Same chain as book_translator.FALLBACK_MODEL_CHAIN, copied rather than
+# imported — importing book_translator would run load_dotenv() into the
+# real keys and drag in its config/database wiring.
+DEFAULT_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "deepseek:deepseek-flash",
+    "openrouter:stealth/space-bunny-alpha",
+]
 
 
 def lang_db_path(epitaka_db: str, lang: str) -> str:
@@ -101,6 +127,38 @@ def lang_db_path(epitaka_db: str, lang: str) -> str:
 def glossary_db_path(epitaka_db: str, lang: str) -> str:
     p = Path(epitaka_db)
     return str(p.parent / f"glossary_{lang}{p.suffix}")
+
+
+def resolve_models(arg: str) -> list[str]:
+    """"claude:sonnet" -> ["claude:sonnet"]; "a, b" -> ["a", "b"];
+    empty -> a fresh copy of DEFAULT_MODELS (never the shared list itself)."""
+    models = [m.strip() for m in (arg or "").split(",") if m.strip()]
+    return models or list(DEFAULT_MODELS)
+
+
+def _wait_for_off_peak(model: str) -> None:
+    """
+    DeepSeek charges double at peak hours, so a run pinned to a deepseek:
+    model waits them out. Checked right before each request (same rule as
+    book_translator, user 2026-10-20); copied locally rather than imported,
+    because importing book_translator would run load_dotenv() into the real
+    keys. Only the FIRST model in the pool is gated — the script cannot see
+    a mid-run fallback switch.
+    """
+    if not model.startswith("deepseek:"):
+        return
+    now = datetime.fromtimestamp(time.time(), timezone.utc)
+    if not costs.is_peak(now):
+        return
+    print(f"[PEAK] DeepSeek peak hours (01:00-04:00 and 06:00-10:00 UTC, Mon-Fri). "
+          f"Waiting until {costs.off_peak_start(now):%Y-%m-%d %H:%M} UTC.", flush=True)
+    while True:
+        now = datetime.fromtimestamp(time.time(), timezone.utc)
+        if not costs.is_peak(now):
+            return
+        # Re-read the clock every slice so the wait follows the wall clock.
+        pause = min(300.0, (costs.off_peak_start(now) - now).total_seconds())
+        time.sleep(max(0.0, pause))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -284,10 +342,10 @@ def process_chunk(
     para_hi: int,
     lang: str,
     params: dict,
+    rotator: ai.KeyRotator | None,
+    models: list[str],
     log_dir: str,
     max_context_chars: int,
-    max_tokens: int,
-    thinking_budget_tokens: int,
     apply: bool,
     dry_run: bool,
     chunk_tag: str,
@@ -317,24 +375,31 @@ def process_chunk(
           f"(linked context ~{len(linked_context)} chars)")
 
     if dry_run:
-        print(user_prompt[:800], "...\n[dry-run — not calling B.AI]")
+        print(user_prompt[:800], "...\n[dry-run — not calling the AI]")
         return 0, 0
 
+    # Checked here, right before the request, so building the prompt is
+    # covered too. Every reply is saved before the next call. Only the
+    # first model in the pool is gated (see _wait_for_off_peak).
+    assert rotator is not None  # only a --dry-run call may come in without one
+    _wait_for_off_peak(models[0])
+
     raw = ai.call_ai_with_logging(
-        prompt=user_prompt,
-        system_prompt=system_prompt,
-        book_id=book_id,
-        chunk_id=chunk_tag,
-        log_dir=log_dir,
-        max_tokens=max_tokens,
-        thinking_budget_tokens=thinking_budget_tokens,
+        rotator       = rotator,
+        prompt        = user_prompt,
+        book_id       = book_id,
+        chunk_id      = chunk_tag,
+        log_dir       = log_dir,
+        model         = models[0],
+        models        = models,
+        system_prompt = system_prompt,
     )
     if raw is None:
-        print(f"  [{chunk_tag}] B.AI call failed (no response). Skipping.")
+        print(f"  [{chunk_tag}] AI call failed (no response). Skipping.")
         return 0, 0
 
     try:
-        result = ai.parse_ai_json_response(raw, expected_keys=("remarks",))
+        result = ai.parse_ai_json_response(raw, ("remarks",))
     except Exception as exc:
         print(f"  [{chunk_tag}] Could not parse response: {exc}. Skipping.")
         return 0, 0
@@ -347,7 +412,11 @@ def process_chunk(
     critical = sum(1 for r in remarks if str(r.get("severity", "")).lower() == "critical")
     print(f"  [{chunk_tag}] {len(remarks)} line(s) flagged ({critical} critical).")
 
-    # Always log findings as translation_remarks.
+    # Always log findings as translation_remarks, carrying the severity in
+    # the note column ("wrong"/"critical") so critical findings stay filterable.
+    for r in remarks:
+        if not str(r.get("note") or "").strip():
+            r["note"] = str(r.get("severity") or "").strip()
     remark_writer = RemarkWriter(params)
     saved = remark_writer.save(book_id, remarks, source_id=book_id)
 
@@ -376,7 +445,8 @@ def process_chunk(
 # Per-book processing
 # ══════════════════════════════════════════════════════════════════
 
-def process_book(book_id: str, args, params: dict) -> tuple[int, int]:
+def process_book(book_id: str, args, params: dict, rotator: ai.KeyRotator | None,
+                models: list[str]) -> tuple[int, int]:
     print("=" * 60)
     print(f"BOOK: {book_id}  lang={args.lang}")
     print("=" * 60)
@@ -405,10 +475,10 @@ def process_book(book_id: str, args, params: dict) -> tuple[int, int]:
             para_hi=phi,
             lang=args.lang,
             params=params,
+            rotator=rotator,
+            models=models,
             log_dir=args.log_dir,
             max_context_chars=args.max_context_chars,
-            max_tokens=args.max_tokens,
-            thinking_budget_tokens=args.thinking_budget_tokens,
             apply=args.apply,
             dry_run=args.dry_run,
             chunk_tag=f"verify_p{plo}-{phi}_c{idx}",
@@ -432,17 +502,17 @@ def main() -> int:
     parser.add_argument("--start", type=int, default=None, help="First para_id (default: book's minimum).")
     parser.add_argument("--end", type=int, default=None, help="Last para_id (default: book's maximum).")
     parser.add_argument("--chunk-paras", type=int, default=DEFAULT_CHUNK_PARAS,
-                         help=f"Paragraphs per B.AI call (default {DEFAULT_CHUNK_PARAS}).")
+                         help=f"Paragraphs per AI call (default {DEFAULT_CHUNK_PARAS}).")
     parser.add_argument("--max-context-chars", type=int, default=DEFAULT_MAX_CONTEXT_CHARS,
                          help="Char budget passed to CommentaryContext for linked texts.")
-    parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS,
-                         help=f"Total B.AI max_tokens per call, thinking + answer combined "
-                              f"(default {DEFAULT_MAX_TOKENS}).")
-    parser.add_argument("--thinking-budget-tokens", type=int, default=DEFAULT_THINKING_BUDGET_TOKENS,
-                         help="Cap on deepseek-v4-flash's reasoning tokens per call — reasoning "
-                              f"stays on, just bounded (default {DEFAULT_THINKING_BUDGET_TOKENS}). "
-                              "If chunks keep coming back empty, raise --max-tokens (headroom for "
-                              "the answer is max-tokens minus this value) before raising this.")
+    parser.add_argument("--model", default="",
+                        help="Model(s) to review with: one name or a comma-separated ordered "
+                             "list (first preferred; the next takes over once every key is "
+                             "rate-limited on the current one). Bare names are Gemini "
+                             "models; provider-prefixed as in the translator: claude:sonnet, "
+                             "deepseek:deepseek-flash, azure:DeepSeek-V4.1-Flash. "
+                             "Default: the translator's fallback chain. Note: the DeepSeek "
+                             "off-peak wait covers only the FIRST model in the list.")
     parser.add_argument("--limit", type=int, default=0, help="Only process the first N chunks (testing).")
     parser.add_argument("--epitaka-db", default=EPITAKA_DB)
     parser.add_argument("--lang-db", default="", help="Override path to epitaka_<lang>.db.")
@@ -452,8 +522,16 @@ def main() -> int:
                          help="Overwrite sentences.translation with the AI's corrections. "
                               "Without this flag, findings are only logged to translation_remarks.")
     parser.add_argument("--dry-run", action="store_true",
-                         help="Build prompts and print the first one per chunk; never call B.AI.")
+                        help="Build prompts and print the first one per chunk; never call the AI.")
     args = parser.parse_args()
+
+    # Inside main(), never at import time: tests import this module and must
+    # not inherit the real .env keys.
+    load_dotenv()
+    models = resolve_models(args.model)
+    print(f"[model] Using model pool: {', '.join(models)}")
+    # A dry run calls nothing, so it must work even with no keys configured.
+    rotator = None if args.dry_run else ai.make_rotator([])  # *_KEY_<N> env vars
 
     epitaka_db = args.epitaka_db
     lang_db = args.lang_db or lang_db_path(epitaka_db, args.lang)
@@ -472,7 +550,7 @@ def main() -> int:
     print(f"[lang] Lang DB   : {lang_db}")
     print(f"[mode] {'APPLY (corrections written to sentences.translation)' if args.apply else 'REPORT-ONLY (remarks logged, nothing overwritten)'}")
     if args.dry_run:
-        print("[mode] DRY RUN — no B.AI calls will be made.")
+        print("[mode] DRY RUN — no AI calls will be made.")
 
     # Resolve book list
     if args.book.strip():
@@ -490,7 +568,7 @@ def main() -> int:
     for book_idx, book_id in enumerate(book_list, 1):
         print(f"\n{'#' * 60}\n# BOOK {book_idx}/{len(book_list)}: {book_id}\n{'#' * 60}")
         try:
-            saved, critical = process_book(book_id, args, params)
+            saved, critical = process_book(book_id, args, params, rotator, models)
         except Exception as exc:
             print(f"[ERROR] Book {book_id} failed: {exc}. Continuing.")
             continue
