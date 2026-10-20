@@ -75,3 +75,13 @@ def test_state_file_never_holds_the_key(monkeypatch, tmp_path):
     text = "".join(p.read_text() for p in tmp_path.glob("state*.json"))
     assert "DEEPSEEK_KEY_1" in text
     assert "sk-secret-123" not in text
+
+
+def test_claude_is_never_throttled(monkeypatch):
+    monkeypatch.setenv("CLAUDE_KEY_1", "marker")
+    rot = ai.make_rotator([])
+
+    start = time.monotonic()
+    got = [rot.acquire(10_000_000, model="claude:sonnet") for _ in range(10)]
+    assert got == ["marker"] * 10
+    assert time.monotonic() - start < 1

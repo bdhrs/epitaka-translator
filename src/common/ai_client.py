@@ -131,6 +131,10 @@ RATE_WINDOW_SECONDS = 60
 DEFAULT_RPM_LIMIT    = int(os.environ.get("AI_RPM_LIMIT", "3"))
 DEFAULT_TPM_LIMIT    = int(os.environ.get("AI_TPM_LIMIT", "250000"))
 
+# Providers whose "key" is only a marker (claude: runs the local CLI), so
+# there is no per-key quota for the rpm/tpm budget to protect.
+UNTHROTTLED_PROVIDERS = {"claude"}
+
 # Where per-key "last used" state is persisted. This is a small JSON file
 # guarded by an OS-level file lock (fcntl.flock), so it stays correct even
 # when several separate processes (e.g. book_translator.py and
@@ -336,6 +340,12 @@ class KeyRotator:
                     f"All keys 429-parked for model {model} (keys still live "
                     f"for other models)."
                 )
+
+            if provider in UNTHROTTLED_PROVIDERS:
+                key = keys_snapshot[start_index]
+                with self._lock:
+                    self._index = (start_index + 1) % len(keys_snapshot)
+                return key
 
             key, wait_seconds = self._try_reserve(keys_snapshot, start_index, estimated_tokens, model)
             if key is not None:

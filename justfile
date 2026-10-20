@@ -28,8 +28,8 @@ relay lang="kn":
 # before re-running over the same book (translation_remarks is not deduped).
 # Extra flags pass through, e.g. just review kn claude:sonnet --book Khp --limit 1
 review lang="kn" model="claude:sonnet" *flags:
-    nohup uv run src/verify_translation.py --lang {{lang}} --model {{model}} {{flags}} >> data/review_{{lang}}.log 2>&1 &
-    @echo "Started in the background. Watch: tail -f data/review_{{lang}}.log"
+    PYTHONUNBUFFERED=1 nohup uv run src/verify_translation.py --lang {{lang}} --model {{model}} {{flags}} >> data/review_{{lang}}.log 2>&1 &
+    @echo "Started in the background. Watch: just tail-review {{lang}}   Stop: just stop {{lang}}"
 
 # Review every Kannada book with Claude Sonnet — full run, no limit, no --apply.
 review-kn-claude: (review "kn" "claude:sonnet")
@@ -99,6 +99,10 @@ run-claude lang="kn":
 # Watch the background run's log. Ctrl+C stops watching, not the run.
 tail lang="kn":
     tail -n 50 -f data/run_{{lang}}.log
+
+# Watch the background review's log. Ctrl+C stops watching, not the review.
+tail-review lang="kn":
+    tail -n 50 -f data/review_{{lang}}.log
 
 # Show progress, speed and cost per day, week or month.
 stats period="day" lang="kn":
