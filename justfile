@@ -24,11 +24,12 @@ relay lang="kn":
     @echo "Started in the background. Watch: just tail {{lang}}   Stop: just stop {{lang}}"
 
 # Review translated books in the background (default: Kannada on Claude Sonnet).
-# Report-only by default — pass --apply yourself, and snapshot the lang DB
-# before re-running over the same book (translation_remarks is not deduped).
+# Report-only by default — pass --apply yourself. review_runner.sh sleeps through
+# usage limits and resumes, skipping chunks the model already reviewed; --redo
+# reviews them again (their remarks are then saved twice).
 # Extra flags pass through, e.g. just review kn claude:sonnet --book Khp --limit 1
 review lang="kn" model="claude:sonnet" *flags:
-    PYTHONUNBUFFERED=1 nohup uv run src/verify_translation.py --lang {{lang}} --model {{model}} {{flags}} >> data/review_{{lang}}.log 2>&1 &
+    nohup ./review_runner.sh {{lang}} {{model}} {{flags}} >> data/review_{{lang}}.log 2>&1 &
     @echo "Started in the background. Watch: just tail-review {{lang}}   Stop: just stop {{lang}}"
 
 # Review every Kannada book with Claude Sonnet — full run, no limit, no --apply.

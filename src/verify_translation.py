@@ -332,6 +332,43 @@ def build_user_prompt(
 
 
 # ══════════════════════════════════════════════════════════════════
+# Progress ledger (so a restart resumes instead of repeating remarks)
+# ══════════════════════════════════════════════════════════════════
+
+def _reviewer(models: list[str], apply: bool) -> str:
+    """Who reviewed a chunk: a Claude pass and a DeepSeek pass are tracked apart."""
+    return models[0] + ("+apply" if apply else "")
+
+
+def _ensure_progress_table(conn) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS review_progress ("
+        "book_id TEXT NOT NULL, para_lo INTEGER NOT NULL, para_hi INTEGER NOT NULL, "
+        "reviewer TEXT NOT NULL, done_at TEXT DEFAULT (datetime('now')), "
+        "PRIMARY KEY (book_id, para_lo, para_hi, reviewer))"
+    )
+
+
+def chunk_reviewed(lang_db: str, book_id: str, para_lo: int, para_hi: int, reviewer: str) -> bool:
+    with _connect(lang_db) as conn:
+        _ensure_progress_table(conn)
+        return conn.execute(
+            "SELECT 1 FROM review_progress WHERE book_id=? AND para_lo=? AND para_hi=? AND reviewer=?",
+            (book_id, para_lo, para_hi, reviewer),
+        ).fetchone() is not None
+
+
+def mark_chunk_reviewed(lang_db: str, book_id: str, para_lo: int, para_hi: int, reviewer: str) -> None:
+    with _connect(lang_db) as conn:
+        _ensure_progress_table(conn)
+        conn.execute(
+            "INSERT OR IGNORE INTO review_progress (book_id, para_lo, para_hi, reviewer) VALUES (?,?,?,?)",
+            (book_id, para_lo, para_hi, reviewer),
+        )
+        conn.commit()
+
+
+# ══════════════════════════════════════════════════════════════════
 # Per-chunk processing
 # ══════════════════════════════════════════════════════════════════
 
@@ -349,8 +386,14 @@ def process_chunk(
     apply: bool,
     dry_run: bool,
     chunk_tag: str,
+    redo: bool = False,
 ) -> tuple[int, int]:
     """Returns (remarks_saved, critical_count) for this chunk."""
+    reviewer = _reviewer(models, apply)
+    if not (redo or dry_run) and chunk_reviewed(params["lang_db"], book_id, para_lo, para_hi, reviewer):
+        print(f"  [{chunk_tag}] Already reviewed by {reviewer}. Skipping.")
+        return 0, 0
+
     lines = fetch_translated_lines(
         lang_db=params["lang_db"],
         epitaka_db=params["epitaka_db"],
@@ -407,6 +450,7 @@ def process_chunk(
     remarks = result.get("remarks", [])
     if not remarks:
         print(f"  [{chunk_tag}] No issues flagged.")
+        mark_chunk_reviewed(params["lang_db"], book_id, para_lo, para_hi, reviewer)
         return 0, 0
 
     critical = sum(1 for r in remarks if str(r.get("severity", "")).lower() == "critical")
@@ -438,6 +482,7 @@ def process_chunk(
             updated += writer.save(book_id, pid, entries)
         print(f"  [{chunk_tag}] --apply: {updated} line(s) overwritten in sentences.translation.")
 
+    mark_chunk_reviewed(params["lang_db"], book_id, para_lo, para_hi, reviewer)
     return saved, critical
 
 
@@ -482,6 +527,7 @@ def process_book(book_id: str, args, params: dict, rotator: ai.KeyRotator | None
             apply=args.apply,
             dry_run=args.dry_run,
             chunk_tag=f"verify_p{plo}-{phi}_c{idx}",
+            redo=args.redo,
         )
         total_saved += saved
         total_critical += critical
@@ -521,6 +567,9 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true",
                          help="Overwrite sentences.translation with the AI's corrections. "
                               "Without this flag, findings are only logged to translation_remarks.")
+    parser.add_argument("--redo", action="store_true",
+                        help="Review chunks again even if this model already did (their remarks are "
+                             "saved a second time). By default a restart skips finished chunks.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Build prompts and print the first one per chunk; never call the AI.")
     args = parser.parse_args()

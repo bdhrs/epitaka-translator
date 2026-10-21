@@ -116,6 +116,49 @@ def test_process_chunk_routes_through_ai_client_with_the_chosen_model(
     assert rows == [("B", 1, 1, "wrong", "B")]
 
 
+def _review_once(tmp_path, monkeypatch, calls, reply=json.dumps({"remarks": []}), **kwargs):
+    """One process_chunk call over the B fixture; `calls` counts the AI requests."""
+    epitaka_db, lang_db = tmp_path / "epitaka.db", tmp_path / "epitaka_kn.db"
+    if not epitaka_db.exists():
+        _make_db(epitaka_db, with_translation=False)
+        _make_db(lang_db, with_translation=True)
+    monkeypatch.setattr(vt.ai, "call_ai_with_logging",
+                        lambda **kw: calls.append(1) or reply)
+    monkeypatch.setattr(
+        vt, "CommentaryContext",
+        lambda params, book_id, lo, hi, max_chars=0: SimpleNamespace(build=lambda: ""),
+    )
+    params = {"epitaka_db": str(epitaka_db), "lang_db": str(lang_db),
+              "glossary_db": str(tmp_path / "glossary.db")}
+    return vt.process_chunk(
+        book_id="B", para_lo=1, para_hi=1, lang="kn", params=params,
+        rotator=cast(ai.KeyRotator, object()), models=["claude:sonnet"],
+        log_dir=str(tmp_path / "logs"), max_context_chars=100,
+        apply=False, dry_run=False, chunk_tag="c1", **kwargs,
+    )
+
+
+def test_a_restart_skips_chunks_the_model_already_reviewed(tmp_path, monkeypatch):
+    calls = []
+    _review_once(tmp_path, monkeypatch, calls)
+    _review_once(tmp_path, monkeypatch, calls)
+    assert len(calls) == 1
+
+
+def test_redo_reviews_a_finished_chunk_again(tmp_path, monkeypatch):
+    calls = []
+    _review_once(tmp_path, monkeypatch, calls)
+    _review_once(tmp_path, monkeypatch, calls, redo=True)
+    assert len(calls) == 2
+
+
+def test_a_failed_call_is_not_marked_so_the_restart_retries_it(tmp_path, monkeypatch):
+    calls = []
+    _review_once(tmp_path, monkeypatch, calls, reply=None)
+    _review_once(tmp_path, monkeypatch, calls)
+    assert len(calls) == 2
+
+
 def test_process_chunk_dry_run_never_calls_the_ai(tmp_path, monkeypatch):
     epitaka_db = tmp_path / "epitaka.db"
     lang_db = tmp_path / "epitaka_kn.db"
@@ -196,8 +239,9 @@ def test_deepseek_does_not_wait_off_peak(clock):
 def test_justfile_review_recipe_defaults_to_claude_sonnet_in_the_background():
     justfile = read("justfile")
     assert 'review lang="kn" model="claude:sonnet" *flags:' in justfile
-    assert ("nohup uv run src/verify_translation.py --lang {{lang}} "
-            "--model {{model}} {{flags}}") in justfile
+    assert "nohup ./review_runner.sh {{lang}} {{model}} {{flags}}" in justfile
+    assert ('uv run python -u src/verify_translation.py --lang "$LANG_CODE" '
+            '--model "$MODEL_NAME" "$@"') in read("review_runner.sh")
 
 
 def test_verify_translation_no_longer_imports_the_bai_client():
