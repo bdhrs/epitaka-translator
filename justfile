@@ -50,6 +50,18 @@ next lang:
 next-deepseek-kn:
     ./runner.sh kn deepseek:deepseek-flash next
 
+# Translate the next unfinished Telugu book with DeepSeek, then stop. Waits out DeepSeek's peak hours.
+next-deepseek-te:
+    ./runner.sh te deepseek:deepseek-flash next
+
+# Translate all Telugu books with DeepSeek in the background, then follow the log. Ctrl+C stops watching, not the run.
+run-deepseek-te: (relay-deepseek-te) (tail "te")
+
+# Start the Telugu DeepSeek run in the background without following the log.
+relay-deepseek-te:
+    nohup ./runner.sh te deepseek:deepseek-flash >> data/run_te.log 2>&1 &
+    @echo "Started in the background. Watch: just tail te   Stop: just stop te"
+
 # Translate the next unfinished Kannada book with Gemini, then stop.
 next-gemini-kn:
     ./runner.sh kn gemini-3.8-flash next
