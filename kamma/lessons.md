@@ -40,3 +40,6 @@
 - 2026-10-20 [CONFUSION] Provider marker keys are per-machine: CLAUDE_KEY_1 exists in the server's .env but not locally, so claude: models silently have an empty pool locally.
 - 2026-10-20 [WORKFLOW] A cd inside a compound bash command silently changed the cwd for later relative paths (rm -rf missed, mkdir nested wrongly) — pin absolute paths or one cd per command after destructive operations.
 - 2026-10-20 [POSITIVE] herdr agent prompt --wait gave a direct cross-agent review round (claude pane reviewed pi's diff) with no context switching for the user.
+- 2026-11-09 [REPEATED] User twice said they could not follow: three-choice questions and a long summary came with too little background; give one example, the cost and a recommendation first, then ask in batches
+- 2026-11-09 [BEHAVIOR] An upstream port (Pāli script in prompts) was specced and planned without measuring the problem; the run logs later showed 0.08 percent of sentences affected, so the biggest phase was dropped — count the real rate in data/ logs before specing a port
+- 2026-11-09 [POSITIVE] Reverting the change and rerunning the tests exposed a test that passed either way (a run ending never trips the stop), which was then removed

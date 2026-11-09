@@ -24,7 +24,7 @@
   (DeepSeek pinned, waits out DeepSeek's peak hours); `just next <lang>` (plus the `next-deepseek-kn` and `next-gemini-kn` shortcuts) does only the next unfinished book;
   `just export <lang>` writes one text file per finished book (split when over the Google Doc size) to `exports/<lang>/<nikaya>/`;
   `just upload <lang>` sends new ones to Google Drive as Google Docs.
-- Long runs happen on a server: SSH alias `epitaka` (`root@187.126.118.33`,
+- Long runs happen on a server: SSH alias `epitaka` (`root@<server-ip>`,
   key login since 2026-10-05), repo at `/root/epitaka-translator`, code kept
   in step by `git pull`. `just pull` mirrors its `data/` here. It snapshots
   the live `epitaka_<lang>.db`/`glossary_<lang>.db` with `sqlite3 .backup`
@@ -95,7 +95,7 @@ users mostly translate other languages, so Hindi-only costs (the
 - Check live behaviour with `--dry-run`, then a short `--max-parts 1` run.
 - Type check: `[tool.pyright]` in `pyproject.toml` points Pyright at `.venv`.
   Pyright is not a dev dependency; run it from the dpd-db environment:
-  `cd <repo> && /home/bodhirasa/MyFiles/3_Active/dpd-db/.venv/bin/pyright src tests`
+  `cd <repo> && <dpd-db root>/.venv/bin/pyright src tests`
   (0 errors on 2026-10-20). An editor must restart its Pyright to read the
   setting. The one pytest `filterwarnings` entry hides only `ast.Str is
   deprecated`, which comes from the pinned `aksharamukha 2.3`.

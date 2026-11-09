@@ -20,7 +20,7 @@ This skill is for this repo only. It studies new upstream commits and sets up a 
 4. Measure before you propose a big change. Read the run logs in `data/` or the real data to see if the problem exists here. A change that fixes a problem the fork does not have is a skip.
 5. Ask the user to decide. Ask in batches, one decision at a time, with the context first. Give a clear recommendation.
 6. After the user decides, write a kamma thread (`/kamma:1-plan`, or `/kamma:quick` for a tiny change). Write `spec.md` and `plan.md` before any code.
-7. After the work lands, add a dated entry to `UPSTREAM_LOG.md`: the new last-checked commit and each item as ported, adapted or skipped with its reason.
+7. Add a dated entry to `UPSTREAM_LOG.md` as soon as the user has decided, even when every item is skipped or already covered. Record each item as ported, adapted, skipped or covered, with its reason. Move the last-checked commit forward only past commits that are fully decided. List any port that is still pending on its own line, and keep the checkpoint before it.
 
 ## Rules
 
