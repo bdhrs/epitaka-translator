@@ -15,7 +15,7 @@ def test_commands_use_the_deepseek_name_that_always_points_at_the_latest_flash()
     # "deepseek-flash" has no version number, so it never goes stale; the old name is only routed for now.
     for name in ("justfile", "runner.sh", ".env.example"):
         assert "deepseek:deepseek-v4" not in read(name), name
-    assert read("justfile").count("deepseek:deepseek-flash") == 5
+    assert read("justfile").count("deepseek:deepseek-flash") == 6
 
 
 def test_fallback_chain_uses_the_same_name():
