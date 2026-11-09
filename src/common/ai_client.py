@@ -751,7 +751,7 @@ def _generate_with_retry(
                                      seconds=time.monotonic() - started,
                                      detail="" if text is not None else err)
                         recorded = True
-                    if text is None:
+                    if text is None or not text.strip():
                         raise CompatError(status, err)
                     r = types.SimpleNamespace(text=text)
                 result["response"] = r

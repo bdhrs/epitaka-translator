@@ -116,7 +116,7 @@ def test_process_chunk_routes_through_ai_client_with_the_chosen_model(
     assert rows == [("B", 1, 1, "wrong", "B")]
 
 
-def _review_once(tmp_path, monkeypatch, calls, reply=json.dumps({"remarks": []}), **kwargs):
+def _review_once(tmp_path, monkeypatch, calls, reply: str | None = json.dumps({"remarks": []}), **kwargs):
     """One process_chunk call over the B fixture; `calls` counts the AI requests."""
     epitaka_db, lang_db = tmp_path / "epitaka.db", tmp_path / "epitaka_kn.db"
     if not epitaka_db.exists():

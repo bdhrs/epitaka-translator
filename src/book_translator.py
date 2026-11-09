@@ -181,6 +181,9 @@ MIN_CHUNK_PENDING_LINES = int(os.environ.get("MIN_CHUNK_PENDING_LINES", 5))
 # (most of the section may already be translated), which used to mean one
 # tiny AI call per section. Adjacent sections are merged into one bigger
 # batch as long as the batch's pending content stays under these two caps.
+# A dead model or an empty quota fails every chunk. Stop the book after this many chunks
+# in a row that saved nothing, instead of paying for one doomed prompt per chunk.
+MAX_CONSECUTIVE_FAILED_CHUNKS = int(os.environ.get("MAX_CONSECUTIVE_FAILED_CHUNKS", 5))
 SECTION_MERGE_MAX_BYTES = int(os.environ.get("SECTION_MERGE_MAX_BYTES", 300_000))
 SECTION_MERGE_MAX_LINES = int(os.environ.get("SECTION_MERGE_MAX_LINES", 50))
 
@@ -1093,6 +1096,7 @@ def process_book(
     total_updated  = 0
     total_glossary = 0
     total_remarks  = 0
+    failed_in_a_row = 0
 
     for part_idx, part in enumerate(sections, 1):
         if args.max_parts != -1 and part_idx > args.max_parts:
@@ -1335,6 +1339,17 @@ def process_book(
             total_updated  += u
             total_glossary += g
             total_remarks  += r
+            # stop_due: a zero from a run that is ending is not a model failure.
+            if u > 0:
+                failed_in_a_row = 0
+            elif not args.dry_run and not stop_due(args):
+                failed_in_a_row += 1
+                if failed_in_a_row >= MAX_CONSECUTIVE_FAILED_CHUNKS:
+                    print(f"[abort] {failed_in_a_row} chunks in a row saved nothing. "
+                          f"Stopping this book.")
+                    break
+        if failed_in_a_row >= MAX_CONSECUTIVE_FAILED_CHUNKS:
+            break
 
         print(f"  Section done. Running: sentences={total_updated}, "
               f"glossary={total_glossary}, remarks={total_remarks}.")
