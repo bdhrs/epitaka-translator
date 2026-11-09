@@ -81,9 +81,9 @@ next-gemini-kn:
 compare-models lang="kn" book="D-i" start="971" end="978" models="gemini-3.7-flash,gemini-3.1-pro-preview,gemini-3.8-flash":
     uv run src/compare_models.py --lang {{lang}} --book {{book}} --start {{start}} --end {{end}} --models {{models}}
 
-# Write each finished sutta to its own text file in exports/<lang>/.
+# Write each finished book to a text file in exports/<lang>/, in a numbered folder per nikaya.
 export lang:
-    uv run src/export_text.py --lang {{lang}} --out-dir exports/{{lang}}
+    uv run src/export_text.py --lang {{lang}} --out-dir exports
 
 # Upload new sutta files to Google Drive as Google Docs. Never overwrites a doc.
 upload lang="kn" folder="ePitaka Proofreading" remote="dpd_drive":

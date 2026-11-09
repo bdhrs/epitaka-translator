@@ -22,7 +22,7 @@
   same book.
 - Linux desktop; long runs go through `runner.sh`, usually via `just run-deepseek <lang>` (`just run` is the background relay: Claude, then DeepSeek V4.1 Flash on Azure)
   (DeepSeek pinned, waits out DeepSeek's peak hours); `just next <lang>` (plus the `next-deepseek-kn` and `next-gemini-kn` shortcuts) does only the next unfinished book;
-  `just export <lang>` writes one text file per finished sutta to `exports/<lang>/`;
+  `just export <lang>` writes one text file per finished book (split when over the Google Doc size) to `exports/<lang>/<nikaya>/`;
   `just upload <lang>` sends new ones to Google Drive as Google Docs.
 - Long runs happen on a server: SSH alias `epitaka` (`root@187.126.118.33`,
   key login since 2026-10-05), repo at `/root/epitaka-translator`, code kept
@@ -93,8 +93,8 @@ users mostly translate other languages, so Hindi-only costs (the
 - Optional prompt/response logs via `--log-dir`.
 - `data/costs.csv`: one line per AI call with tokens and USD, plus a printed
   running total (this call / this run / all time).
-- A plain text file per finished sutta from `src/export_text.py`, in
-  `exports/<lang>/<lang>_<sc_id>.txt` (not in `data/`, which `just pull`
+- A plain text file per finished book from `src/export_text.py`, in
+  `exports/<lang>/<NN_Nikaya>/<NN_book>.txt` (not in `data/`, which `just pull`
   rsyncs from the server): Pāli in the target script, then the translation,
   paragraph by paragraph. Part-done suttas are skipped.
 - Proofreading (2026-10-05): `just upload` puts each file in Google Drive as a

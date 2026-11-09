@@ -29,7 +29,7 @@ just stats            # daily stats from the call log (just stats week, just sta
 just next kn          # translate only the next unfinished book, then stop
 just next-deepseek-kn # same as `just next kn`, kept as a Kannada shortcut
 just next-gemini-kn   # same, with Gemini rotating through the Gemini keys
-just export kn        # one text file per finished sutta in exports/kn/
+just export kn        # one text file per finished book, in a numbered folder per nikaya in exports/kn/
 just upload kn        # upload new sutta files to Google Drive as Google Docs
 just compare-models   # run one section on three Gemini models, results in data/compare/
 just pull             # copy the server's data/ folder here (overwrites local copies)
@@ -53,13 +53,21 @@ just pull             # copy the server's data/ folder here (overwrites local co
 - `just next <lang>` does the same for one book only: the first book in the
   preset order that still has untranslated lines. It stops when that book is
   done, so run it again for the book after.
-- `just export <lang>` writes one plain text file per finished sutta into
-  `exports/<lang>/`, named after its SuttaCentral id (`kn_dn1.txt`,
-  `kn_mn10.txt`). Each paragraph is the Pāli in the target language's script,
-  the translation, and a blank line; the sutta's title is its first
+- `just export <lang>` writes one plain text file per book into a
+  numbered folder per nikaya under `exports/<lang>/`, so Drive sorts them in
+  canon order (`01_Digha_Nikaya/01_D-i.txt`, `02_Majjhima_Nikaya/01_M-i_1.txt`).
+  A book over 900,000 characters (a Google Doc holds about 1,020,000) is split
+  between suttas into `_1`, `_2`, and so on. A single sutta that is itself too big is cut
+  before a heading inside it; one with no heading inside prints a warning.
+  Each paragraph is the Pāli in the target language's script, a blank line,
+  the translation, a blank line, then the review remarks if any (exactly as
+  the reviewer wrote them), and two blank lines; each sutta's title is its first
   paragraph. A sutta with any untranslated line (bare punctuation lines
-  aside) is skipped and named in the output. Old `.txt` files in the folder are removed first. For Indian
-  languages nothing in the files is in Roman letters.
+  aside) is skipped and named in the output. Old `.txt` files under the language folder, and folders left empty, are removed first. For Indian
+  languages the Pāli and the translation have no Roman letters; the review remarks
+  and the folder and file names are left as they are.
+  Each language folder also gets `!!! README FIRST.txt`, the proofreaders' instructions,
+  copied from `src/readme_first.txt` (`{language}` becomes the language name, e.g. "Kannada").
 - `just upload <lang>` copies those files to Google Drive with rclone, as
   Google Docs, into `ePitaka Proofreading/<lang>` on the `dpd_drive` remote
   (settings: `folder`, `remote`). It skips every file that already has a doc

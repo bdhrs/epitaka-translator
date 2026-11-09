@@ -25,9 +25,8 @@ def test_pali_in_kannada_then_translation(tmp_path):
     text = export_text.export_text(str(src), "kn", "M-i", 280, 410)
 
     assert text == (
-        "105. ಏವಂ ಮೇ ಸುತಂ ಭಗವಾ\n"
-        "ನಾನು ಹೀಗೆ ಕೇಳಿದೆನು\n"
-        "\n"
+        "105. ಏವಂ ಮೇ ಸುತಂ ಭಗವಾ\n\n"
+        "ನಾನು ಹೀಗೆ ಕೇಳಿದೆನು\n\n\n"
     )  # para 282 has no translation yet, so it is left out
 
 
@@ -51,21 +50,19 @@ def remark_fixture(tmp_path):
     return src
 
 
-def test_review_remarks_follow_their_paragraph_in_the_local_script(tmp_path):
+def test_review_remarks_follow_their_paragraph_exactly_as_written(tmp_path):
     text = export_text.export_text(str(remark_fixture(tmp_path)), "kn", "M-i", 280, 410)
 
     assert text == (
-        "ಏವಂ ಮೇ ಸುತಂ\n"
-        "ನಾನು ಹೀಗೆ ಕೇಳಿದೆನು\n"
+        "ಏವಂ ಮೇ ಸುತಂ\n\n"
+        "ನಾನು ಹೀಗೆ ಕೇಳಿದೆನು\n\n"
         "ಪರಿಶೀಲನಾ ಟಿಪ್ಪಣಿಗಳು:\n"
-        "  ಲೈನ್ 1 [ತಪ್ಪು]: 'ಸುತಂ' ಅನುವಾದಿಸಿಲ್ಲ\n"
+        "  ಲೈನ್ 1 [ತಪ್ಪು]: 'sutaṃ' ಅನುವಾದಿಸಿಲ್ಲ\n"
         "    ಸೂಚಿತ ತಿದ್ದುಪಡಿ: ಹೀಗೆ ಕೇಳಿದ್ದೇನೆ\n"
-        "\n"
-        "ತತ್ರ ಖೋ\n"
-        "ಅಲ್ಲಿ\n"
-        "\n"
+        "\n\n"
+        "ತತ್ರ ಖೋ\n\n"
+        "ಅಲ್ಲಿ\n\n\n"
     )  # the translator's own remark (note is not a severity) stays out
-    assert not any(c.isascii() and c.isalpha() for c in text)
 
 
 def test_remarks_can_be_left_out(tmp_path):
@@ -129,40 +126,44 @@ def make_sutta_dbs(tmp_path, translated):
     ])
     make_headings(src, [h for h in HEADINGS if h[0] == "D-i"])
     with sqlite3.connect(src) as conn:
-        conn.execute("CREATE TABLE books (id INT, book_id TEXT)")
-        conn.executemany("INSERT INTO books VALUES (?,?)", [(1, "D-i"), (4, "M-i")])
+        conn.execute("CREATE TABLE books (id INT, book_id TEXT, nikaya TEXT, sub_nikaya TEXT)")
+        conn.executemany("INSERT INTO books VALUES (?,?,?,?)", [
+            (1, "D-i", "Sutta Piṭaka", "Dīgha Nikāya"), (4, "M-i", "Sutta Piṭaka", "Majjhima Nikāya")])
     make_db(tmp_path / "epitaka_kn.db", "translation", translated)
     return str(src)
 
 
-def test_finished_suttas_get_a_file_each_part_done_ones_are_skipped(tmp_path):
+def test_finished_suttas_go_in_their_book_file_part_done_ones_are_skipped(tmp_path):
     src = make_sutta_dbs(tmp_path, [  # real Kannada lines; para 218 not translated yet
         ("D-i", 4, 1, "1. ಬ್ರಹ್ಮಜಾಲ ಸುತ್ತ"),
         ("D-i", 5, 1, "ಪರಿವ್ರಾಜಕರ ಕಥೆ"),
         ("D-i", 217, 1, "೨. ಸಾಮಞ್ಞಫಲಸುತ್ತ"),
     ])
     out = tmp_path / "exports" / "kn"
+    root = tmp_path / "exports"
 
-    written, skipped = export_text.export_suttas(src, "kn", str(out))
+    written, skipped = export_text.export_suttas(src, "kn", str(root))
 
     assert (written, skipped) == (1, ["dn2: 1 of 2 lines"])
-    assert sorted(p.name for p in out.iterdir()) == ["kn_dn1.txt"]
-    assert (out / "kn_dn1.txt").read_text(encoding="utf-8") == (
-        "1. ಬ್ರಹ್ಮಜಾಲಸುತ್ತಂ\n1. ಬ್ರಹ್ಮಜಾಲ ಸುತ್ತ\n\n"
-        "ಪರಿಬ್ಬಾಜಕಕಥಾ\nಪರಿವ್ರಾಜಕರ ಕಥೆ\n\n"
+    assert [p.name for p in out.glob("*/*.txt")] == ["01_D-i.txt"]
+    assert (out / "01_Digha_Nikaya" / "01_D-i.txt").read_text(encoding="utf-8") == (
+        "1. ಬ್ರಹ್ಮಜಾಲಸುತ್ತಂ\n\n1. ಬ್ರಹ್ಮಜಾಲ ಸುತ್ತ\n\n\n"
+        "ಪರಿಬ್ಬಾಜಕಕಥಾ\n\nಪರಿವ್ರಾಜಕರ ಕಥೆ\n\n\n"
     )
 
 
 def test_old_txt_files_are_removed_other_files_kept(tmp_path):
     src = make_sutta_dbs(tmp_path, [("D-i", 4, 1, "1. ಬ್ರಹ್ಮಜಾಲ ಸುತ್ತ")])
     out = tmp_path / "exports" / "kn"
-    out.mkdir(parents=True)
+    root = tmp_path / "exports"
+    (out / "09_Old_Folder").mkdir(parents=True)
     (out / "kn_dn1.txt").write_text("old", encoding="utf-8")
+    (out / "09_Old_Folder" / "01_D-i.txt").write_text("old", encoding="utf-8")
     (out / "notes.md").write_text("mine", encoding="utf-8")
 
-    export_text.export_suttas(src, "kn", str(out))
+    export_text.export_suttas(src, "kn", str(root))
 
-    assert sorted(p.name for p in out.iterdir()) == ["notes.md"]  # dn1 is no longer finished
+    assert sorted(p.name for p in out.iterdir()) == [export_text.README_NAME, "notes.md"]  # dn1 is no longer finished: no old .txt, no empty old folder
 
 
 def test_a_missing_sentence_holds_back_the_sutta_but_bare_punctuation_does_not(tmp_path):
@@ -175,16 +176,56 @@ def test_a_missing_sentence_holds_back_the_sutta_but_bare_punctuation_does_not(t
     ])
     make_headings(src, [h for h in HEADINGS if h[0] == "D-i"])
     with sqlite3.connect(src) as conn:
-        conn.execute("CREATE TABLE books (id INT, book_id TEXT)")
-        conn.execute("INSERT INTO books VALUES (1, 'D-i')")
+        conn.execute("CREATE TABLE books (id INT, book_id TEXT, nikaya TEXT, sub_nikaya TEXT)")
+        conn.execute("INSERT INTO books VALUES (1, 'D-i', 'Sutta Piṭaka', 'Dīgha Nikāya')")
     make_db(tmp_path / "epitaka_kn.db", "translation", [
         ("D-i", 4, 1, "1. ಬ್ರಹ್ಮಜಾಲ ಸುತ್ತ"),
         ("D-i", 217, 1, "171. “ಭಿಕ್ಷುಗಳೇ, ರೂಪಗಳ ಆಸ್ವಾದ ಯಾವುದು?"),
     ])
     out = tmp_path / "exports" / "kn"
+    root = tmp_path / "exports"
 
-    assert export_text.export_suttas(str(src), "kn", str(out)) == (1, ["dn2: 1 of 2 lines"])
-    assert sorted(p.name for p in out.iterdir()) == ["kn_dn1.txt"]
+    assert export_text.export_suttas(str(src), "kn", str(root)) == (1, ["dn2: 1 of 2 lines"])
+    assert [p.name for p in out.glob("*/*.txt")] == ["01_D-i.txt"]
+
+
+def test_files_and_folders_are_numbered_in_canon_order(tmp_path):
+    src = tmp_path / "epitaka.db"
+    make_db(src, "pali", [
+        ("D-i", 4, 1, "1. Brahmajālasuttaṃ"), ("D-i", 217, 1, "2. Sāmaññaphalasuttaṃ"),
+        ("Khp", 4, 1, "1. Saraṇattayaṃ"),
+    ])
+    make_headings(src, [("D-i", 4, 2, "x", "dn1"), ("D-i", 217, 2, "y", "dn2"), ("Khp", 4, 2, "z", "kp1")])
+    with sqlite3.connect(src) as conn:
+        conn.execute("CREATE TABLE books (id INT, book_id TEXT, nikaya TEXT, sub_nikaya TEXT)")
+        conn.executemany("INSERT INTO books VALUES (?,?,?,?)", [
+            (1, "D-i", "Sutta Piṭaka", "Dīgha Nikāya"), (23, "Khp", "Sutta Piṭaka", "Khuddaka Nikāya"),
+            (45, "Vin-i", "Vinaya Piṭaka", "")])
+    make_db(tmp_path / "epitaka_kn.db", "translation", [
+        ("D-i", 4, 1, "ಒಂದು"), ("D-i", 217, 1, "ಎರಡು"), ("Khp", 4, 1, "ಮೂರು")])
+    out = tmp_path / "exports" / "kn"
+    root = tmp_path / "exports"
+
+    export_text.export_suttas(str(src), "kn", str(root))
+
+    assert sorted(str(p.relative_to(out)) for p in out.glob("*/*.txt")) == [
+        "01_Digha_Nikaya/01_D-i.txt", "02_Khuddaka_Nikaya/01_Khp.txt"]
+    text = (out / "01_Digha_Nikaya" / "01_D-i.txt").read_text(encoding="utf-8")
+    assert text.index("ಒಂದು") < text.index("ಎರಡು")  # both suttas, in order, in the one book file
+
+
+def test_a_book_too_big_for_one_doc_is_split_between_suttas(tmp_path, monkeypatch):
+    src = make_sutta_dbs(tmp_path, [("D-i", 4, 1, "ಒಂದು"), ("D-i", 5, 1, "ಒಂದು ಕಥೆ"),
+                                    ("D-i", 217, 1, "ಎರಡು"), ("D-i", 218, 1, "ಎರಡು ಕಥೆ")])
+    monkeypatch.setattr(export_text, "MAX_FILE_CHARS", 60)
+    root = tmp_path / "exports"
+
+    export_text.export_suttas(src, "kn", str(root))
+
+    files = sorted((root / "kn" / "01_Digha_Nikaya").iterdir())
+    assert [f.name for f in files] == ["01_D-i_1.txt", "01_D-i_2.txt"]
+    assert "ಒಂದು" in files[0].read_text(encoding="utf-8") and "ಎರಡು" not in files[0].read_text(encoding="utf-8")
+    assert "ಎರಡು" in files[1].read_text(encoding="utf-8")
 
 
 def test_a_transliterator_that_returns_nothing_is_an_error(monkeypatch):
@@ -194,3 +235,56 @@ def test_a_transliterator_that_returns_nothing_is_an_error(monkeypatch):
 
     with pytest.raises(ValueError, match="returned nothing"):
         export_text._to_script("evaṃ", "Kannada")
+
+
+def nested_book(tmp_path):
+    # Real shape of Vin-v: one level-1 "sutta" holds the whole book, level-2 suttas sit inside it.
+    src = tmp_path / "epitaka.db"
+    paras = [(4, "Parivārapāḷi", "ಪರಿವಾರ"), (5, "Pāli five", "ಐದು"), (10, "Samuṭṭhāna", "ಸಮುಟ್ಠಾನ"),
+             (11, "Pāli eleven", "ಹನ್ನೊಂದು"), (20, "Antarapeyyālaṃ", "ಅಂತರ"), (21, "Pāli twenty-one", "ಇಪ್ಪತ್ತೊಂದು")]
+    make_db(src, "pali", [("Vin-v", p, 1, pali) for p, pali, _ in paras])
+    make_headings(src, [("Vin-v", 4, 1, "x", "pvr-name"), ("Vin-v", 10, 2, "y", "pvr3"), ("Vin-v", 20, 2, "z", "pvr4")])
+    with sqlite3.connect(src) as conn:
+        conn.execute("CREATE TABLE books (id INT, book_id TEXT, nikaya TEXT, sub_nikaya TEXT)")
+        conn.execute("INSERT INTO books VALUES (45, 'Vin-v', 'Vinaya Piṭaka', '')")
+    make_db(tmp_path / "epitaka_kn.db", "translation", [("Vin-v", p, 1, kn) for p, _, kn in paras])
+    return str(src)
+
+
+def test_a_sutta_inside_another_is_not_written_twice(tmp_path):
+    src = nested_book(tmp_path)
+
+    export_text.export_suttas(src, "kn", str(tmp_path / "exports"))
+
+    (book_file,) = (tmp_path / "exports" / "kn" / "01_Vinaya_Piṭaka".replace("ṭ", "t")).iterdir()
+    assert book_file.read_text(encoding="utf-8").count("ಹನ್ನೊಂದು") == 1
+
+
+def test_a_sutta_too_big_for_one_doc_is_cut_before_a_heading_inside_it(tmp_path, monkeypatch):
+    src = nested_book(tmp_path)
+    monkeypatch.setattr(export_text, "MAX_FILE_CHARS", 50)
+
+    export_text.export_suttas(src, "kn", str(tmp_path / "exports"))
+
+    files = sorted((tmp_path / "exports" / "kn" / "01_Vinaya_Pitaka").iterdir())
+    texts = [f.read_text(encoding="utf-8") for f in files]
+    assert len(files) == 3
+    assert texts[0].startswith("ಪರಿವಾರ") and texts[1].startswith("ಸಮುಟ್ಠಾನ") and texts[2].startswith("ಅಂತರ")
+
+
+def test_every_language_folder_gets_the_readme_with_its_language_name(tmp_path):
+    src = make_sutta_dbs(tmp_path, [("D-i", 4, 1, "1. ಬ್ರಹ್ಮಜಾಲ ಸುತ್ತ"), ("D-i", 5, 1, "ಕಥೆ")])
+
+    export_text.export_suttas(src, "kn", str(tmp_path / "exports"))
+
+    text = (tmp_path / "exports" / "kn" / "!!! README FIRST.txt").read_text(encoding="utf-8")
+    assert "in the Kannada script" in text and "(ಕನ್ನಡ)" not in text and "{language}" not in text
+
+
+def test_a_file_over_the_google_doc_limit_prints_a_warning(tmp_path, monkeypatch, capsys):
+    src = nested_book(tmp_path)
+    monkeypatch.setattr(export_text, "GOOGLE_DOC_LIMIT", 50)
+
+    export_text.export_suttas(src, "kn", str(tmp_path / "exports"))
+
+    assert "WARNING: 01_Vin-v.txt has" in capsys.readouterr().out

@@ -1,10 +1,10 @@
 """
 export_text.py — write a plain text file of source Pāli and its translation,
-paragraph by paragraph: the Pāli in the target language's script, then the
-translation, then a blank line. Only translated paragraphs are written.
-Without --book: one <lang>_<sc_id>.txt per finished sutta, e.g. kn_dn1.txt.
+paragraph by paragraph: the Pāli in the target language's script, a blank line,
+the translation, then the review remarks if any. Only translated paragraphs are written.
+Without --book: one file per finished book in <out-dir>/<lang>/<nikaya>/, e.g. kn/01_Digha_Nikaya/01_D-i.txt.
 
-    uv run src/export_text.py --lang kn --out-dir exports/kn     # one file per finished sutta
+    uv run src/export_text.py --lang kn --out-dir exports        # one file per finished book
     uv run src/export_text.py --lang kn --book M-i --start 280 --end 410 --out mn10_kn.txt
 """
 
@@ -82,8 +82,8 @@ def _remarks_for_range(lang_db: str, book: str, start: int, end: int) -> dict[in
     return dict(out)
 
 
-def _remark_annotation(remarks: list[tuple], script: str | None) -> str:
-    """One paragraph's review remarks as a Kannada block; all of it in the local script."""
+def _remark_annotation(remarks: list[tuple]) -> str:
+    """One paragraph's review remarks as a block, with the reviewer's text exactly as written."""
     if not remarks:
         return ""
     lines = ["ಪರಿಶೀಲನಾ ಟಿಪ್ಪಣಿಗಳು:"]
@@ -91,7 +91,7 @@ def _remark_annotation(remarks: list[tuple], script: str | None) -> str:
         lines.append(f"  ಲೈನ್ {line_id} [{_SEVERITY_KAN[severity]}]: {(explanation or '').strip()}")
         if (suggestion or "").strip():
             lines.append(f"    ಸೂಚಿತ ತಿದ್ದುಪಡಿ: {suggestion.strip()}")
-    return "\n" + _to_script("\n".join(lines), script)
+    return "\n\n" + "\n".join(lines)
 
 
 def sutta_ranges(epitaka_db: str, book: str) -> list[tuple[str, int, int]]:
@@ -128,7 +128,7 @@ def export_text(epitaka_db: str, lang: str, book: str, start: int, end: int,
     notes = _remarks_for_range(cu.lang_db_path(epitaka_db, lang), book, start, end) if remarks else {}
 
     return "".join(
-        f"{pali[p]}\n{trans[p]}{_remark_annotation(notes.get(p, []), script)}\n\n"
+        f"{pali[p]}\n\n{trans[p]}{_remark_annotation(notes.get(p, []))}\n\n\n"
         for p in sorted(pali)
     )
 
@@ -140,21 +140,107 @@ def _line_ids(path: str, col: str, book: str, start: int, end: int) -> set[tuple
     return {(p, ln) for p, ln, text in rows if any(c.isalpha() for c in _TAG.sub("", text))}
 
 
+def _ascii(name: str) -> str:
+    """The name without accents and with only letters, digits, "_" and "-": "Dīgha Nikāya" -> "Digha_Nikaya"."""
+    folded = "".join(c for c in unicodedata.normalize("NFD", name) if not unicodedata.combining(c))
+    return re.sub(r"[^\w-]+", "_", folded).strip("_")
+
+
+README_NAME = "!!! README FIRST.txt"  # the "!!!" sorts it first on Drive
+README_TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "readme_first.txt")
+
+# A Google Doc holds about 1,020,000 characters; stay clear of it.
+GOOGLE_DOC_LIMIT = 1_020_000
+MAX_FILE_CHARS = 900_000
+
+
+def _readme_text(lang: str) -> str:
+    """The template with the language name without its native-script bracket: "Kannada"."""
+    with open(README_TEMPLATE, encoding="utf-8") as f:
+        return f.read().replace("{language}", cu.lang_name(lang).split(" (")[0])
+
+
+def write_readme(lang_dir: str, lang: str) -> None:
+    """Write the proofreaders' instructions into a language folder."""
+    text = _readme_text(lang)
+    with open(os.path.join(lang_dir, README_NAME), "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def _parts(texts: list[str]) -> list[str]:
+    """Join whole suttas into files of at most MAX_FILE_CHARS; a sutta is never cut in two."""
+    parts: list[list[str]] = [[]]
+    size = 0
+    for t in texts:
+        if parts[-1] and size + len(t) > MAX_FILE_CHARS:
+            parts.append([])
+            size = 0
+        parts[-1].append(t)
+        size += len(t)
+    return ["".join(p) for p in parts]
+
+
+def _sutta_texts(epitaka_db: str, lang: str, book: str, start: int, end: int,
+                 script: str | None, remarks: bool) -> list[str]:
+    """The sutta's text, in pieces when it is too big for one file.
+
+    A piece is cut only before a heading inside the sutta: first before the
+    highest-level headings, then, if a piece is still too big, before the next
+    level down. A piece with no heading left inside stays whole.
+    """
+    text = export_text(epitaka_db, lang, book, start, end, script, remarks)
+    if len(text) <= MAX_FILE_CHARS:
+        return [text]
+    inner = _read(epitaka_db, "SELECT para_id, level FROM headings WHERE book_id=? AND para_id>? AND para_id<=? "
+                              "AND level<10 ORDER BY para_id", (book, start, end))
+    if not inner:
+        return [text]
+    top = min(level for _, level in inner)
+    cuts = [start] + [para for para, level in inner if level == top] + [end + 1]
+    pieces: list[str] = []
+    for a, b in zip(cuts, cuts[1:]):
+        pieces += _sutta_texts(epitaka_db, lang, book, a, b - 1, script, remarks)
+    return pieces
+
+
 def export_suttas(epitaka_db: str, lang: str, out_dir: str,
                   script: str | None = None, remarks: bool = True) -> tuple[int, list[str]]:
-    """One <lang>_<sc_id>.txt per finished sutta; returns (files written, skipped-sutta notes)."""
+    """One file per finished book (more when it is too big), in <out_dir>/<lang>/<nikaya>/.
+
+    The language is only the folder name, never part of a file name. Folders and
+    files carry a number prefix (kn/01_Digha_Nikaya/01_D-i.txt) so they sort in
+    canon order. A book too big for one Google Doc becomes 01_D-i_1.txt, 01_D-i_2.txt,
+    cut between suttas, or before a heading inside a sutta that is itself too big.
+    The language folder also gets README_NAME, the same text for every language.
+    Returns (book files written, skipped-sutta notes).
+    """
     lang_db = cu.lang_db_path(epitaka_db, lang)
     done = {b for (b,) in _read(lang_db, "SELECT DISTINCT book_id FROM sentences WHERE translation <> ''", ())}
-    books = [b for (b,) in _read(epitaka_db, "SELECT book_id FROM books ORDER BY id", ()) if b in done]
+    books = [(b, _ascii(sub or nik or "Other")) for b, sub, nik in
+             _read(epitaka_db, "SELECT book_id, sub_nikaya, nikaya FROM books ORDER BY id", ()) if b in done]
+    folders = {name: i for i, name in enumerate(dict.fromkeys(name for _, name in books), 1)}
 
+    _readme_text(lang)  # fail before the old export is deleted if the template is missing
+    out_dir = os.path.join(out_dir, lang)
     os.makedirs(out_dir, exist_ok=True)
-    # A sutta whose file was written last time may no longer qualify.
-    for old in glob.glob(os.path.join(out_dir, "*.txt")):
+    # A book whose file was written last time may have changed its parts.
+    for old in glob.glob(os.path.join(out_dir, "**", "*.txt"), recursive=True):
         os.remove(old)
+    for d, _, _ in os.walk(out_dir, topdown=False):
+        if d != out_dir and not os.listdir(d):
+            os.rmdir(d)
+
+    write_readme(out_dir, lang)
 
     written, skipped = 0, []
-    for book in books:
+    numbers: dict[str, int] = defaultdict(int)
+    for book, folder in books:
+        texts = []
+        covered = 0  # a sutta nested in an earlier one is already in the book file
         for sc, start, end in sutta_ranges(epitaka_db, book):
+            if end <= covered:
+                continue
+            start = max(start, covered + 1)
             # Per line, not per paragraph: M-i 520 had one sentence untranslated in a translated paragraph.
             pali = _line_ids(epitaka_db, "pali", book, start, end)
             trans = _line_ids(lang_db, "translation", book, start, end) & pali
@@ -162,8 +248,21 @@ def export_suttas(epitaka_db: str, lang: str, out_dir: str,
             if trans != pali:
                 skipped.append(f"{sc}: {len(trans)} of {len(pali)} lines")
                 continue
-            with open(os.path.join(out_dir, f"{lang}_{sc}.txt"), "w", encoding="utf-8") as f:
-                f.write(export_text(epitaka_db, lang, book, start, end, script, remarks))
+            texts += _sutta_texts(epitaka_db, lang, book, start, end, script, remarks)
+            covered = end
+        if not texts:
+            continue
+        numbers[folder] += 1
+        sub = os.path.join(out_dir, f"{folders[folder]:02d}_{folder}")
+        os.makedirs(sub, exist_ok=True)
+        parts = _parts(texts)
+        for i, text in enumerate(parts, 1):
+            suffix = f"_{i}" if len(parts) > 1 else ""
+            name = f"{numbers[folder]:02d}_{_ascii(book)}{suffix}.txt"
+            if len(text) > GOOGLE_DOC_LIMIT:  # a sutta with no heading inside it cannot be cut
+                print(f"WARNING: {name} has {len(text):,} characters, over the Google Doc limit of {GOOGLE_DOC_LIMIT:,}.")
+            with open(os.path.join(sub, name), "w", encoding="utf-8") as f:
+                f.write(text)
             written += 1
     return written, skipped
 
@@ -171,11 +270,11 @@ def export_suttas(epitaka_db: str, lang: str, out_dir: str,
 def main() -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").strip().partition("\n")[0])
     ap.add_argument("--lang", required=True, help='Translation language code, e.g. "kn".')
-    ap.add_argument("--book", help='Book id, e.g. "M-i" (default: one file per finished sutta, see --out-dir).')
+    ap.add_argument("--book", help='Book id, e.g. "M-i" (default: one file per finished book, see --out-dir).')
     ap.add_argument("--start", type=int, default=0, help="First para_id (default: book start).")
     ap.add_argument("--end", type=int, default=10**9, help="Last para_id, inclusive (default: book end).")
     ap.add_argument("--out", help="Output .txt path (with --book).")
-    ap.add_argument("--out-dir", help="Folder for the per-sutta files (without --book); its old .txt files are removed.")
+    ap.add_argument("--out-dir", help="Folder that holds the <lang> folder of per-book files (without --book); old .txt files under <lang> are removed.")
     ap.add_argument("--script", default=None,
                     help="Aksharamukha script for the Pāli (default: the target language's script).")
     ap.add_argument("--no-remarks", action="store_true",
