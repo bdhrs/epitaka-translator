@@ -470,6 +470,12 @@ default 3000), `--max-parts` (stop after N sections — for testing),
 (path overrides), `--log-dir` (prompt/response audit logs),
 `--api-keys` (comma-separated keys instead of env vars).
 
+A book stops after 5 chunks in a row that save nothing, so a dead model or an
+empty quota does not pay for one failed prompt per chunk. Change the 5 with the
+`MAX_CONSECUTIVE_FAILED_CHUNKS` env var. A dry run and a run that is ending
+never count. A model reply that holds only blank space counts as a failed try
+and is asked again.
+
 ### Languages (`--lang`)
 
 Any code in `LANG_NAMES` (`src/common/common_utils.py`) works; the name is

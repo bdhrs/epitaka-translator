@@ -67,6 +67,19 @@ users mostly translate other languages, so Hindi-only costs (the
 - Indian-language output never contains Roman letters; Pāli terms go in the
   local script.
 
+- 2026-11-09: studied upstream `dhammanana/epitaka_translator` commit `5d463fb`
+  (2026-10-17). Ported: blank-reply retry and the stop after
+  `MAX_CONSECUTIVE_FAILED_CHUNKS` (default 5) failed chunks. Ported but not
+  used by prompts: the shared Pāli script map and `to_pali_script` in
+  `common_utils.py` (export reads the map). Skipped, by decision: the retry
+  count knob (default stays 10; nobody asked for another number), Pāli in
+  script inside prompts (the Kannada and Telugu run logs show 221 of 247,829
+  and 176 of 251,796 sentences dropped for Roman letters, about 0.08 percent,
+  and a dropped line is retried on a later run), and `description_builder.py`
+  (Gemini-only, English-centric, nothing here reads its output; revisit when
+  the web reader needs per-section descriptions). Do not re-propose these
+  without new numbers.
+
 ## Resources
 - Upstream repo and data releases: github.com/dhammanana/epitaka_app.
 - Hindi reference data: `epitaka_hi.zip` on the same release page.
