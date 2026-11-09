@@ -26,7 +26,9 @@ ai_client.py.
 
 import os
 import re
+import warnings
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 import sqlite3
 
@@ -129,6 +131,83 @@ LANG_NAMES: dict[str, str] = {
 def lang_name(lang: str) -> str:
     """Human-readable name for a language code, falling back to its uppercased code."""
     return LANG_NAMES.get(lang, lang.upper())
+
+
+# ══════════════════════════════════════════════════════════════════
+# Pāli script per target language
+#
+# Values are Aksharamukha script names. A language not listed here keeps
+# Roman Pāli. export_text.py reads this same map.
+# ══════════════════════════════════════════════════════════════════
+
+PALI_SCRIPT_BY_LANG: dict[str, str] = {
+    "kn": "Kannada", "te": "Telugu", "ta": "Tamil", "ml": "Malayalam",
+    "hi": "Devanagari", "mr": "Devanagari", "ne": "Devanagari",
+    "bn": "Bengali", "gu": "Gujarati", "pa": "Gurmukhi", "or": "Oriya",
+    "si": "Sinhala", "th": "Thai", "my": "Burmese",
+    "lo": "Lao", "km": "Khmer", "bo": "Tibetan", "as": "Assamese",
+}
+
+
+def pali_script_name(lang: str) -> str:
+    """Aksharamukha script name for Pāli in `lang`, or "" when it stays Roman."""
+    return PALI_SCRIPT_BY_LANG.get(lang, "")
+
+
+# Tags, entities and numbers must stay as they are: <b>/<i> names would turn into
+# target-script letters, and a line that is only a number ("2933.") must stay
+# recognisable, because the prompt tells the model to return nothing for it.
+_PROTECTED_RE = re.compile(
+    r"(<[^>]+>|&(?:[a-zA-Z][a-zA-Z0-9]*|#\d+|#x[0-9A-Fa-f]+);|\d+(?:\.\d+)*\.?)"
+)
+
+_warned_conversion_failure = False
+
+
+def _aksharamukha_process(source: str, target: str, text: str) -> str:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)  # noisy on first import
+        from aksharamukha import transliterate
+    out = transliterate.process(source, target, text)
+    if out is None:
+        raise ValueError(f"aksharamukha returned nothing for {source} -> {target}")
+    return out
+
+
+@lru_cache(maxsize=20_000)  # the same Pāli line recurs in several blocks of one prompt
+def _transliterate_segment(text: str, source: str, target: str) -> str:
+    global _warned_conversion_failure
+    try:
+        return _aksharamukha_process(source, target, text)
+    except Exception as e:
+        # A broken library falls back to Roman, so the book still runs. On a
+        # no-Roman target that Roman text costs sentences, so say why, once.
+        if not _warned_conversion_failure:
+            _warned_conversion_failure = True
+            print(f"[warn] Pāli script conversion failed ({e}); sending Roman Pāli.", flush=True)
+        return text
+
+
+def to_pali_script(text: str, lang: str, *, source: str = "IASTPali") -> str:
+    """Convert `text` to the Pāli script of `lang`; unchanged when `lang` has none."""
+    target = pali_script_name(lang)
+    if not text or not target:
+        return text
+    parts = _PROTECTED_RE.split(text)
+    return "".join(
+        part if _PROTECTED_RE.fullmatch(part) else _transliterate_segment(part, source, target)
+        for part in parts
+    )
+
+
+def to_roman_pali(text: str) -> str:
+    """Convert text in any Indic script back to Roman IAST. Used for glossary keys."""
+    if not text:
+        return text
+    try:
+        return _aksharamukha_process("autodetect", "IASTPali", text)
+    except Exception:
+        return text
 
 
 # Common Pāli particles / inflections that must NOT be added to the glossary

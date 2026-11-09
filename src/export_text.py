@@ -21,12 +21,7 @@ from collections import defaultdict
 import common.common_utils as cu
 
 # Aksharamukha script names for target languages; anything else stays Roman.
-PALI_SCRIPTS = {
-    "kn": "Kannada", "te": "Telugu", "ta": "Tamil", "ml": "Malayalam",
-    "hi": "Devanagari", "mr": "Devanagari", "ne": "Devanagari",
-    "bn": "Bengali", "gu": "Gujarati", "pa": "Gurmukhi", "or": "Oriya",
-    "si": "Sinhala", "th": "Thai", "my": "Burmese",
-}
+PALI_SCRIPTS = cu.PALI_SCRIPT_BY_LANG
 
 _TAG = re.compile(r"<[^>]+>")
 

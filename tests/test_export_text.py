@@ -288,3 +288,8 @@ def test_a_file_over_the_google_doc_limit_prints_a_warning(tmp_path, monkeypatch
     export_text.export_suttas(src, "kn", str(tmp_path / "exports"))
 
     assert "WARNING: 01_Vin-v.txt has" in capsys.readouterr().out
+
+
+def test_export_uses_the_shared_script_map():
+    assert export_text.PALI_SCRIPTS is export_text.cu.PALI_SCRIPT_BY_LANG
+    assert export_text.PALI_SCRIPTS["kn"] == "Kannada"
