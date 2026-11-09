@@ -131,9 +131,10 @@ RATE_WINDOW_SECONDS = 60
 DEFAULT_RPM_LIMIT    = int(os.environ.get("AI_RPM_LIMIT", "3"))
 DEFAULT_TPM_LIMIT    = int(os.environ.get("AI_TPM_LIMIT", "250000"))
 
-# Providers whose "key" is only a marker (claude: runs the local CLI), so
-# there is no per-key quota for the rpm/tpm budget to protect.
-UNTHROTTLED_PROVIDERS = {"claude"}
+# Providers with no per-key quota for the rpm/tpm budget to protect. claude:
+# the "key" is only a marker for the local CLI. deepseek: the API has no
+# request limit; it answers 429 itself when it is busy.
+UNTHROTTLED_PROVIDERS = {"claude", "deepseek"}
 
 # Where per-key "last used" state is persisted. This is a small JSON file
 # guarded by an OS-level file lock (fcntl.flock), so it stays correct even
