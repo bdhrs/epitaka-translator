@@ -38,6 +38,9 @@ review-kn-claude: (review "kn" "claude:sonnet")
 # Review every Kannada book with Azure DeepSeek V4.1 Flash — full run, no limit, no --apply.
 review-kn-azure: (review "kn" "azure:DeepSeek-V4.1-Flash")
 
+# Review every Telugu book with DeepSeek Flash — full run, no limit, no --apply.
+review-te-deepseek: (review "te" "deepseek:deepseek-flash")
+
 # Translate everything with DeepSeek only, in this window. Waits out DeepSeek's peak hours.
 run-deepseek lang="kn":
     ./runner.sh {{lang}} deepseek:deepseek-flash
@@ -60,6 +63,14 @@ run-deepseek-te: (relay-deepseek-te) (tail "te")
 # Start the Telugu DeepSeek run in the background without following the log.
 relay-deepseek-te:
     nohup ./runner.sh te deepseek:deepseek-flash >> data/run_te.log 2>&1 &
+    @echo "Started in the background. Watch: just tail te   Stop: just stop te"
+
+# Translate all Telugu books with Claude in the background, then follow the log. Ctrl+C stops watching, not the run.
+run-claude-te: (relay-claude-te) (tail "te")
+
+# Start the Telugu Claude run in the background without following the log.
+relay-claude-te:
+    nohup ./runner.sh te claude:sonnet >> data/run_te.log 2>&1 &
     @echo "Started in the background. Watch: just tail te   Stop: just stop te"
 
 # Translate the next unfinished Kannada book with Gemini, then stop.
