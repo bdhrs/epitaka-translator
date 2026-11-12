@@ -73,6 +73,14 @@ relay-claude-te:
     nohup ./runner.sh te claude:sonnet >> data/run_te.log 2>&1 &
     @echo "Started in the background. Watch: just tail te   Stop: just stop te"
 
+# Translate all Malayalam books with DeepSeek in the background, then follow the log. Ctrl+C stops watching, not the run.
+run-deepseek-ml: (relay-deepseek-ml) (tail "ml")
+
+# Start the Malayalam DeepSeek run in the background without following the log.
+relay-deepseek-ml:
+    nohup ./runner.sh ml deepseek:deepseek-flash >> data/run_ml.log 2>&1 &
+    @echo "Started in the background. Watch: just tail ml   Stop: just stop ml"
+
 # Translate the next unfinished Kannada book with Gemini, then stop.
 next-gemini-kn:
     ./runner.sh kn gemini-3.8-flash next
