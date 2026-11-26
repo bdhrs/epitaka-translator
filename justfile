@@ -41,6 +41,9 @@ review-kn-azure: (review "kn" "azure:DeepSeek-V4.1-Flash")
 # Review every Telugu book with DeepSeek Flash — full run, no limit, no --apply.
 review-te-deepseek: (review "te" "deepseek:deepseek-flash")
 
+# Review every Gujarati book with DeepSeek Flash — full run, no limit, no --apply.
+review-gu-deepseek: (review "gu" "deepseek:deepseek-flash")
+
 # Translate everything with DeepSeek only, in this window. Waits out DeepSeek's peak hours.
 run-deepseek lang="kn":
     ./runner.sh {{lang}} deepseek:deepseek-flash
@@ -80,6 +83,14 @@ run-deepseek-ml: (relay-deepseek-ml) (tail "ml")
 relay-deepseek-ml:
     nohup ./runner.sh ml deepseek:deepseek-flash >> data/run_ml.log 2>&1 &
     @echo "Started in the background. Watch: just tail ml   Stop: just stop ml"
+
+# Translate all Gujarati books with DeepSeek in the background, then follow the log. Ctrl+C stops watching, not the run.
+run-deepseek-gu: (relay-deepseek-gu) (tail "gu")
+
+# Start the Gujarati DeepSeek run in the background without following the log.
+relay-deepseek-gu:
+    nohup ./runner.sh gu deepseek:deepseek-flash >> data/run_gu.log 2>&1 &
+    @echo "Started in the background. Watch: just tail gu   Stop: just stop gu"
 
 # Translate the next unfinished Kannada book with Gemini, then stop.
 next-gemini-kn:
